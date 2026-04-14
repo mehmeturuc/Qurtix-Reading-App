@@ -1,0 +1,58 @@
+import '../domain/book.dart';
+
+final mockBooks = <Book>[
+  Book(
+    id: 'atomic-habits',
+    title: 'Atomic Habits',
+    author: 'James Clear',
+    filePath: 'local/books/atomic-habits.epub',
+    fileType: 'EPUB',
+    coverPath: 'cover-green',
+    createdAt: DateTime(2026, 1, 8),
+  ),
+  Book(
+    id: 'deep-work',
+    title: 'Deep Work',
+    author: 'Cal Newport',
+    filePath: 'local/books/deep-work.pdf',
+    fileType: 'PDF',
+    coverPath: 'cover-blue',
+    createdAt: DateTime(2026, 1, 12),
+  ),
+  Book(
+    id: 'the-design-of-everyday-things',
+    title: 'The Design of Everyday Things',
+    author: 'Don Norman',
+    filePath: 'local/books/design-of-everyday-things.epub',
+    fileType: 'EPUB',
+    coverPath: 'cover-red',
+    createdAt: DateTime(2026, 1, 16),
+  ),
+  Book(
+    id: 'sapiens',
+    title: 'Sapiens',
+    author: 'Yuval Noah Harari',
+    filePath: 'local/books/sapiens.pdf',
+    fileType: 'PDF',
+    coverPath: 'cover-purple',
+    createdAt: DateTime(2026, 2, 3),
+  ),
+  Book(
+    id: 'thinking-fast-and-slow',
+    title: 'Thinking, Fast and Slow',
+    author: 'Daniel Kahneman',
+    filePath: 'local/books/thinking-fast-and-slow.epub',
+    fileType: 'EPUB',
+    coverPath: 'cover-yellow',
+    createdAt: DateTime(2026, 2, 10),
+  ),
+  Book(
+    id: 'the-pragmatic-programmer',
+    title: 'The Pragmatic Programmer',
+    author: 'Andrew Hunt',
+    filePath: 'local/books/pragmatic-programmer.pdf',
+    fileType: 'PDF',
+    coverPath: 'cover-teal',
+    createdAt: DateTime(2026, 2, 18),
+  ),
+];
