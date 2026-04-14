@@ -5,5 +5,9 @@ abstract class BookRepository {
 
   Book? getBookById(String id);
 
+  void addBook(Book book);
+
   void markOpened(String id, DateTime openedAt);
+
+  void deleteBook(String id);
 }

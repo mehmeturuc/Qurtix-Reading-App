@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../shared/design/app_design.dart';
 import '../../../shared/widgets/app_page.dart';
 import '../../library/domain/book.dart';
 import '../../library/domain/book_repository.dart';
@@ -9,7 +10,7 @@ import '../../reader/domain/reader_annotation.dart';
 import '../../reader/presentation/reader_screen.dart';
 import '../application/annotation_export_service.dart';
 
-enum _AnnotationTypeFilter { all, highlight, note }
+enum _AnnotationTypeFilter { all, highlight, note, bookmark }
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({
@@ -54,7 +55,12 @@ class _NotesScreenState extends State<NotesScreen> {
               final filtered = _applyFilters(annotations);
 
               return ListView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.x5,
+                  AppSpacing.x4,
+                  AppSpacing.x5,
+                  28,
+                ),
                 children: [
                   _NotesFilters(
                     books: books,
@@ -70,17 +76,18 @@ class _NotesScreenState extends State<NotesScreen> {
                       setState(() => _favoritesOnly = value);
                     },
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: AppSpacing.x5),
                   if (filtered.isEmpty)
                     const _EmptyNotes()
                   else
                     for (final annotation in filtered)
                       Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.only(bottom: AppSpacing.x3),
                         child: _NoteCard(
                           annotation: annotation,
                           bookTitle: _bookTitle(annotation.bookId),
                           onTap: () => _openAnnotation(annotation),
+                          onDelete: () => _deleteAnnotation(annotation),
                         ),
                       ),
                 ],
@@ -94,12 +101,16 @@ class _NotesScreenState extends State<NotesScreen> {
 
   List<ReaderAnnotation> _applyFilters(List<ReaderAnnotation> annotations) {
     return annotations.where((annotation) {
+      if (!annotation.isUserAnnotation) return false;
+
       final matchesBook = _bookId == null || annotation.bookId == _bookId;
       final matchesType = switch (_typeFilter) {
         _AnnotationTypeFilter.all => true,
         _AnnotationTypeFilter.highlight =>
           annotation.type == ReaderAnnotationType.highlight,
         _AnnotationTypeFilter.note => annotation.type == ReaderAnnotationType.note,
+        _AnnotationTypeFilter.bookmark =>
+          annotation.type == ReaderAnnotationType.bookmark,
       };
       final matchesFavorite = !_favoritesOnly || annotation.isFavorite;
 
@@ -124,6 +135,15 @@ class _NotesScreenState extends State<NotesScreen> {
           initialAnnotation: annotation,
         ),
       ),
+    );
+  }
+
+  void _deleteAnnotation(ReaderAnnotation annotation) {
+    widget.annotationRepository.deleteAnnotation(annotation.id);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Deleted ${annotation.displayTypeLabel.toLowerCase()}')),
     );
   }
 
@@ -292,15 +312,14 @@ class _NotesFilters extends StatelessWidget {
     final theme = Theme.of(context);
     const allBooksValue = '__all_books__';
 
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        DropdownMenu<String>(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+
+        final bookMenu = DropdownMenu<String>(
           initialSelection: selectedBookId ?? allBooksValue,
           label: const Text('Book'),
-          width: 260,
+          width: compact ? constraints.maxWidth : 260,
           onSelected: (value) {
             onBookChanged(value == allBooksValue ? null : value);
           },
@@ -312,26 +331,32 @@ class _NotesFilters extends StatelessWidget {
             for (final book in books)
               DropdownMenuEntry<String>(value: book.id, label: book.title),
           ],
-        ),
-        SegmentedButton<_AnnotationTypeFilter>(
-          segments: const [
-            ButtonSegment(
+        );
+
+        final typeTabs = AppSegmentedControl<_AnnotationTypeFilter>(
+          value: typeFilter,
+          onChanged: (value) => onTypeChanged(value),
+          options: const [
+            AppSegmentedOption(
               value: _AnnotationTypeFilter.all,
-              label: Text('All'),
+              label: 'All',
             ),
-            ButtonSegment(
+            AppSegmentedOption(
               value: _AnnotationTypeFilter.highlight,
-              label: Text('Highlights'),
+              label: 'Highlights',
             ),
-            ButtonSegment(
+            AppSegmentedOption(
               value: _AnnotationTypeFilter.note,
-              label: Text('Notes'),
+              label: 'Notes',
+            ),
+            AppSegmentedOption(
+              value: _AnnotationTypeFilter.bookmark,
+              label: 'Bookmarks',
             ),
           ],
-          selected: {typeFilter},
-          onSelectionChanged: (values) => onTypeChanged(values.first),
-        ),
-        FilterChip(
+        );
+
+        final favorites = FilterChip(
           selected: favoritesOnly,
           onSelected: onFavoritesChanged,
           avatar: Icon(
@@ -340,8 +365,37 @@ class _NotesFilters extends StatelessWidget {
             color: favoritesOnly ? theme.colorScheme.primary : null,
           ),
           label: const Text('Favorites'),
-        ),
-      ],
+          labelStyle: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        );
+
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              bookMenu,
+              const SizedBox(height: AppSpacing.x3),
+              typeTabs,
+              const SizedBox(height: AppSpacing.x3),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: favorites,
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            bookMenu,
+            const SizedBox(width: AppSpacing.x3),
+            Expanded(child: typeTabs),
+            const SizedBox(width: AppSpacing.x3),
+            favorites,
+          ],
+        );
+      },
     );
   }
 }
@@ -351,66 +405,74 @@ class _NoteCard extends StatelessWidget {
     required this.annotation,
     required this.bookTitle,
     required this.onTap,
+    required this.onDelete,
   });
 
   final ReaderAnnotation annotation;
   final String bookTitle;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isNote = annotation.type == ReaderAnnotationType.note;
     final markerColor = annotationColorById(annotation.colorId);
 
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: AppCorners.lg,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Ink(
           decoration: BoxDecoration(
             color: colors.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.outlineVariant),
+            borderRadius: AppCorners.lg,
+            border: Border.all(color: AppBorders.subtle(colors).color),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(AppSpacing.x4),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: markerColor,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppCorners.sm,
                   ),
                   child: const SizedBox(width: 10, height: 54),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.x3),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Text(
-                            isNote ? 'Note' : 'Highlight',
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
+                          Expanded(
+                            child: Text(
+                              annotation.displayTypeLabel,
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 8),
                           if (annotation.isFavorite)
                             Icon(
                               Icons.star_rounded,
                               size: 18,
                               color: colors.primary,
                             ),
+                          IconButton(
+                            onPressed: onDelete,
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            tooltip:
+                                'Delete ${annotation.displayTypeLabel.toLowerCase()}',
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.x1),
                       Text(
                         bookTitle,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -418,15 +480,16 @@ class _NoteCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: AppSpacing.x3),
                       Text(
                         annotation.selectedText,
+                        textDirection: _textDirectionFor(annotation.selectedText),
                         style: theme.textTheme.bodyMedium?.copyWith(
                           height: 1.35,
                         ),
                       ),
                       if (annotation.noteText.isNotEmpty) ...[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: AppSpacing.x3),
                         Text(
                           annotation.noteText,
                           style: theme.textTheme.bodyMedium?.copyWith(
@@ -444,6 +507,12 @@ class _NoteCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  TextDirection? _textDirectionFor(String value) {
+    if (RegExp(r'[\u0590-\u08ff]').hasMatch(value)) return TextDirection.rtl;
+
+    return null;
   }
 }
 
@@ -464,16 +533,16 @@ class _EmptyNotes extends StatelessWidget {
             size: 48,
             color: colors.onSurfaceVariant,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppSpacing.x4),
           Text(
             'No annotations yet',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppSpacing.x2),
           Text(
-            'Select text in the reader to save highlights and notes.',
+            'Select text in the reader to save highlights and notes, or save a bookmark from the reader toolbar.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: colors.onSurfaceVariant,

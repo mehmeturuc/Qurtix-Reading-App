@@ -61,6 +61,8 @@ class AnnotationExportService {
 
   List<ReaderAnnotation> _annotationsFor(AnnotationExportRequest request) {
     final annotations = _annotationRepository.getAnnotations().where((annotation) {
+      if (!annotation.isUserAnnotation) return false;
+
       final matchesBook = request.bookId == null || annotation.bookId == request.bookId;
       final matchesFavorite = !request.favoritesOnly || annotation.isFavorite;
 

@@ -1,12 +1,42 @@
 import 'package:flutter/material.dart';
 
+import '../../../../shared/design/app_design.dart';
 import '../../domain/book.dart';
 
+enum BookCardAction { organize, removeFromCollection, delete }
+
 class BookCard extends StatelessWidget {
-  const BookCard({required this.book, required this.onTap, super.key});
+  const BookCard({
+    required this.book,
+    required this.onTap,
+    required this.onActionSelected,
+    this.collectionName,
+    super.key,
+  });
 
   final Book book;
   final VoidCallback onTap;
+  final ValueChanged<BookCardAction> onActionSelected;
+  final String? collectionName;
+
+  static const double horizontalPadding = AppSpacing.x3;
+  static const double verticalPadding = AppSpacing.x3;
+  static const double coverAspectRatio = 3 / 4;
+  static const double sectionGap = AppSpacing.x2;
+  static const double titleHeight = 40;
+  static const double collectionHeight = 18;
+
+  static double heightForWidth(double width) {
+    final coverWidth = width - (horizontalPadding * 2);
+    final coverHeight = coverWidth / coverAspectRatio;
+
+    return (verticalPadding * 2) +
+        coverHeight +
+        sectionGap +
+        titleHeight +
+        sectionGap +
+        collectionHeight;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,80 +45,84 @@ class BookCard extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: '${book.title} by ${book.author}',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: _coverColor(book.coverPath, colors),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colors.outlineVariant),
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+      label: '${book.title} by ${book.displayAuthor}',
+      child: Material(
+        color: colors.surface,
+        borderRadius: AppCorners.lg,
+        elevation: 2,
+        shadowColor: colors.shadow.withValues(alpha: 0.16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: AppCorners.lg,
+              border: Border.all(color: AppBorders.subtle(colors).color),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(verticalPadding),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
                     children: [
-                      Icon(
-                        Icons.menu_book_rounded,
-                        size: 44,
-                        color: colors.onPrimary,
-                      ),
-                      const SizedBox(height: 10),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: colors.surface.withValues(alpha: 0.88),
-                          borderRadius: BorderRadius.circular(8),
+                      AspectRatio(
+                        aspectRatio: coverAspectRatio,
+                        child: _BookCover(
+                          book: book,
+                          color: _coverColor(book.coverPath, colors),
+                          icon: _iconFor(book.sourceType),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          child: Text(
-                            book.fileType,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colors.onSurface,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
+                      ),
+                      Positioned(
+                        top: AppSpacing.x1,
+                        right: AppSpacing.x1,
+                        child: _BookActionsButton(
+                          onSelected: onActionSelected,
+                          showRemoveFromCollection: collectionName != null,
                         ),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: sectionGap),
+                  SizedBox(
+                    height: titleHeight,
+                    child: Text(
+                      book.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        height: 1.18,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: sectionGap),
+                  SizedBox(
+                    height: collectionHeight,
+                    child: Text(
+                      collectionName ?? 'Unsorted',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: collectionName == null
+                            ? colors.onSurfaceVariant
+                            : colors.primary,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              book.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-                height: 1.2,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              book.author,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Color _coverColor(String coverPath, ColorScheme colors) {
+  Color _coverColor(String? coverPath, ColorScheme colors) {
     return switch (coverPath) {
       'cover-blue' => const Color(0xFF3269A8),
       'cover-red' => const Color(0xFFA8473B),
@@ -97,5 +131,129 @@ class BookCard extends StatelessWidget {
       'cover-teal' => const Color(0xFF2A8278),
       _ => colors.primary,
     };
+  }
+
+  IconData _iconFor(BookFileType fileType) {
+    return switch (fileType) {
+      BookFileType.pdf => Icons.picture_as_pdf_rounded,
+      BookFileType.epub => Icons.menu_book_rounded,
+      BookFileType.plainText => Icons.article_rounded,
+    };
+  }
+}
+
+class _BookActionsButton extends StatelessWidget {
+  const _BookActionsButton({
+    required this.onSelected,
+    required this.showRemoveFromCollection,
+  });
+
+  final ValueChanged<BookCardAction> onSelected;
+  final bool showRemoveFromCollection;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
+    return Material(
+      color: colors.surface.withValues(alpha: 0.92),
+      borderRadius: AppCorners.sm,
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox.square(
+        dimension: 32,
+        child: PopupMenuButton<BookCardAction>(
+          tooltip: 'Book actions',
+          padding: EdgeInsets.zero,
+          icon: Icon(
+            Icons.more_horiz_rounded,
+            color: colors.onSurfaceVariant,
+          ),
+          onSelected: onSelected,
+          itemBuilder: (context) => [
+            const PopupMenuItem<BookCardAction>(
+              value: BookCardAction.organize,
+              child: Text('Move to folder'),
+            ),
+            if (showRemoveFromCollection)
+              const PopupMenuItem<BookCardAction>(
+                value: BookCardAction.removeFromCollection,
+                child: Text('Remove from folder'),
+              ),
+            const PopupMenuDivider(),
+            const PopupMenuItem<BookCardAction>(
+              value: BookCardAction.delete,
+              child: Text('Delete book completely'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BookCover extends StatelessWidget {
+  const _BookCover({
+    required this.book,
+    required this.color,
+    required this.icon,
+  });
+
+  final Book book;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: AppCorners.md,
+        border: Border.all(
+          color: colors.onSurface.withValues(alpha: 0.08),
+        ),
+      ),
+      child: Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 42,
+                  color: colors.onPrimary,
+                ),
+                const SizedBox(height: AppSpacing.x3),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.surface.withValues(alpha: 0.9),
+                    borderRadius: AppCorners.sm,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.x3,
+                      vertical: AppSpacing.x1,
+                    ),
+                    child: Text(
+                      book.fileType,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

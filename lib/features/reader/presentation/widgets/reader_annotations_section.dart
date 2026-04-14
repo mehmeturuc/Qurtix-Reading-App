@@ -23,7 +23,7 @@ class ReaderAnnotationsSection extends StatelessWidget {
   final Color borderColor;
   final double maxWidth;
   final ValueChanged<ReaderAnnotation> onTap;
-  final ValueChanged<String> onDelete;
+  final ValueChanged<ReaderAnnotation> onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +40,7 @@ class ReaderAnnotationsSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Annotations',
+                'Annotations and bookmarks',
                 style: theme.textTheme.titleMedium?.copyWith(
                   color: textColor,
                   fontWeight: FontWeight.w700,
@@ -85,12 +85,11 @@ class _AnnotationCard extends StatelessWidget {
   final Color surfaceColor;
   final Color borderColor;
   final ValueChanged<ReaderAnnotation> onTap;
-  final ValueChanged<String> onDelete;
+  final ValueChanged<ReaderAnnotation> onDelete;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isNote = annotation.type == ReaderAnnotationType.note;
     final markerColor = annotationColorById(annotation.colorId);
 
     return Material(
@@ -124,7 +123,7 @@ class _AnnotationCard extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            isNote ? 'Note' : 'Highlight',
+                            annotation.displayTypeLabel,
                             style: theme.textTheme.labelMedium?.copyWith(
                               color: mutedColor,
                               fontWeight: FontWeight.w700,
@@ -145,12 +144,15 @@ class _AnnotationCard extends StatelessWidget {
                         annotation.selectedText,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
+                        textDirection: _textDirectionFor(
+                          annotation.selectedText,
+                        ),
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: textColor,
                           height: 1.35,
                         ),
                       ),
-                      if (isNote && annotation.noteText.isNotEmpty) ...[
+                      if (annotation.noteText.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Text(
                           annotation.noteText,
@@ -165,10 +167,10 @@ class _AnnotationCard extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  onPressed: () => onDelete(annotation.id),
+                  onPressed: () => onDelete(annotation),
                   icon: const Icon(Icons.delete_outline_rounded),
                   color: mutedColor,
-                  tooltip: 'Delete annotation',
+                  tooltip: 'Delete ${annotation.displayTypeLabel.toLowerCase()}',
                 ),
               ],
             ),
@@ -176,5 +178,11 @@ class _AnnotationCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  TextDirection? _textDirectionFor(String value) {
+    if (RegExp(r'[\u0590-\u08ff]').hasMatch(value)) return TextDirection.rtl;
+
+    return null;
   }
 }

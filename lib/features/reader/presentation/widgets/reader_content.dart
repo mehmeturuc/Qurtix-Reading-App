@@ -8,11 +8,13 @@ class ReaderSelection {
     required this.text,
     required this.startIndex,
     required this.endIndex,
+    this.locationRef,
   });
 
   final String text;
   final int startIndex;
   final int endIndex;
+  final String? locationRef;
 }
 
 class ReaderContent extends StatefulWidget {
@@ -25,6 +27,11 @@ class ReaderContent extends StatefulWidget {
     required this.maxWidth,
     required this.onSelectionChanged,
     this.focusedAnnotationId,
+    this.indexOffset = 0,
+    this.annotationStartOffset,
+    this.annotationEndOffset,
+    this.locationOffsetToRenderedOffset,
+    this.renderedOffsetToLocationOffset,
     super.key,
   });
 
@@ -36,6 +43,11 @@ class ReaderContent extends StatefulWidget {
   final double maxWidth;
   final ValueChanged<ReaderSelection?> onSelectionChanged;
   final String? focusedAnnotationId;
+  final int indexOffset;
+  final int? Function(ReaderAnnotation annotation)? annotationStartOffset;
+  final int? Function(ReaderAnnotation annotation)? annotationEndOffset;
+  final int? Function(int locationOffset)? locationOffsetToRenderedOffset;
+  final int Function(int renderedOffset)? renderedOffsetToLocationOffset;
 
   @override
   State<ReaderContent> createState() => _ReaderContentState();
@@ -55,7 +67,12 @@ class _ReaderContentState extends State<ReaderContent> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.text != widget.text ||
+        oldWidget.indexOffset != widget.indexOffset ||
         oldWidget.focusedAnnotationId != widget.focusedAnnotationId ||
+        oldWidget.annotationStartOffset != widget.annotationStartOffset ||
+        oldWidget.annotationEndOffset != widget.annotationEndOffset ||
+        oldWidget.locationOffsetToRenderedOffset !=
+            widget.locationOffsetToRenderedOffset ||
         !_sameAnnotations(oldWidget.annotations, widget.annotations)) {
       _spans = _buildTextSpans();
     }
@@ -194,7 +211,17 @@ class _ReaderContentState extends State<ReaderContent> {
 
     for (var i = 0; i < widget.annotations.length; i++) {
       final annotation = widget.annotations[i];
-      final range = _AnnotationRange.from(annotation, widget.text.length, i);
+      if (!annotation.canHighlightText) continue;
+
+      final range = _AnnotationRange.from(
+        annotation,
+        widget.text.length,
+        widget.indexOffset,
+        i,
+        annotationStartOffset: widget.annotationStartOffset,
+        annotationEndOffset: widget.annotationEndOffset,
+        locationOffsetToRenderedOffset: widget.locationOffsetToRenderedOffset,
+      );
       if (range != null) ranges.add(range);
     }
 
@@ -228,10 +255,15 @@ class _ReaderContentState extends State<ReaderContent> {
 
     if (start >= end) return null;
 
+    final startIndex = widget.renderedOffsetToLocationOffset?.call(start) ??
+        widget.indexOffset + start;
+    final endIndex = widget.renderedOffsetToLocationOffset?.call(end) ??
+        widget.indexOffset + end;
+
     return ReaderSelection(
       text: widget.text.substring(start, end),
-      startIndex: start,
-      endIndex: end,
+      startIndex: startIndex,
+      endIndex: endIndex,
     );
   }
 
@@ -273,14 +305,28 @@ class _AnnotationRange {
   static _AnnotationRange? from(
     ReaderAnnotation annotation,
     int textLength,
+    int indexOffset,
     int order,
+    {
+    int? Function(ReaderAnnotation annotation)? annotationStartOffset,
+    int? Function(ReaderAnnotation annotation)? annotationEndOffset,
+    int? Function(int locationOffset)? locationOffsetToRenderedOffset,
+  }
   ) {
-    final start = annotation.locationStartIndex;
-    final end = annotation.locationEndIndex;
+    final start = annotationStartOffset?.call(annotation) ??
+        annotation.locationStartIndex;
+    final end = annotationEndOffset?.call(annotation) ??
+        annotation.locationEndIndex;
     if (start == null || end == null) return null;
 
-    final clampedStart = start.clamp(0, textLength).toInt();
-    final clampedEnd = end.clamp(0, textLength).toInt();
+    final localStart = locationOffsetToRenderedOffset?.call(start) ??
+        start - indexOffset;
+    final localEnd = locationOffsetToRenderedOffset?.call(end) ??
+        end - indexOffset;
+    if (localEnd <= 0 || localStart >= textLength) return null;
+
+    final clampedStart = localStart.clamp(0, textLength).toInt();
+    final clampedEnd = localEnd.clamp(0, textLength).toInt();
     final safeStart = clampedStart < clampedEnd ? clampedStart : clampedEnd;
     final safeEnd = clampedStart < clampedEnd ? clampedEnd : clampedStart;
     if (safeStart >= safeEnd) return null;

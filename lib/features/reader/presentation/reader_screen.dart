@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../library/domain/book.dart';
@@ -5,6 +7,8 @@ import '../domain/annotation_repository.dart';
 import '../domain/reader_annotation.dart';
 import 'models/reader_theme_mode.dart';
 import 'widgets/add_note_sheet.dart';
+import 'widgets/epub_reader_view.dart';
+import 'widgets/pdf_reader_view.dart';
 import 'widgets/reader_annotations_section.dart';
 import 'widgets/reader_content.dart';
 import 'widgets/reader_controls_sheet.dart';
@@ -27,27 +31,54 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   static const _maxInitialAnnotationAttempts = 5;
+  static const _readingPositionSaveDelay = Duration(milliseconds: 900);
 
   final ScrollController _scrollController = ScrollController();
+  final EpubReaderController _epubReaderController = EpubReaderController();
+  final PdfReaderController _pdfReaderController = PdfReaderController();
 
   double _fontSize = 18;
   double _lineHeight = 1.65;
   bool _isWideText = false;
   ReaderSelection? _selection;
   String? _focusedAnnotationId;
+  ReaderAnnotation? _openingTarget;
   bool _didHandleInitialAnnotation = false;
   int _initialAnnotationAttempts = 0;
   final ValueNotifier<double> _readingProgress = ValueNotifier<double>(0);
+  final ValueNotifier<String> _positionLabel = ValueNotifier<String>(
+    'Progress 0%',
+  );
   ReaderThemeMode _themeMode = ReaderThemeMode.light;
 
   double get _textMaxWidth => _isWideText ? 760 : 620;
   String get _readerText => _mockReaderContent(widget.book);
+  BookFileType get _sourceType {
+    if (!widget.book.isDocumentBacked) return BookFileType.plainText;
+
+    return widget.book.sourceType;
+  }
+
+  bool get _usesTextReader => _sourceType == BookFileType.plainText;
+  bool get _supportsTypographyControls => _sourceType != BookFileType.pdf;
+  bool get _supportsTextWidthControls => _sourceType != BookFileType.pdf;
+  String get _bookmarkId => 'bookmark:${widget.book.id}';
+  String get _readingPositionId => 'reading-position:${widget.book.id}';
+  String? _currentLocationRef;
+  double _currentProgress = 0;
+  int _currentPdfPage = 1;
+  int _currentPdfTotalPages = 0;
+  String? _lastSavedLocationRef;
+  String? _pendingReadingLocationRef;
+  Timer? _readingPositionSaveTimer;
 
   @override
   void initState() {
     super.initState();
+    _openingTarget = _resolveOpeningTarget();
     _scrollController.addListener(_updateReadingProgress);
-    _scheduleInitialAnnotationJump();
+    _updateReadingProgressAfterLayout();
+    if (_usesTextReader) _scheduleInitialAnnotationJump();
   }
 
   @override
@@ -55,18 +86,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.initialAnnotation?.id != widget.initialAnnotation?.id) {
+      _openingTarget = _resolveOpeningTarget();
       _didHandleInitialAnnotation = false;
       _initialAnnotationAttempts = 0;
-      _scheduleInitialAnnotationJump();
+      if (_usesTextReader) _scheduleInitialAnnotationJump();
     }
   }
 
   @override
   void dispose() {
+    _readingPositionSaveTimer?.cancel();
+    _commitReadingPosition();
     _scrollController
       ..removeListener(_updateReadingProgress)
       ..dispose();
     _readingProgress.dispose();
+    _positionLabel.dispose();
     super.dispose();
   }
 
@@ -98,7 +133,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                widget.book.author,
+                widget.book.displayAuthor,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 12, color: mode.mutedColor),
@@ -106,6 +141,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ],
           ),
           actions: [
+            IconButton(
+              onPressed: _openDirectNavigation,
+              icon: const Icon(Icons.near_me_rounded),
+              tooltip: _sourceType == BookFileType.pdf
+                  ? 'Go to page'
+                  : 'Go to progress',
+            ),
+            PopupMenuButton<_BookmarkAction>(
+              tooltip: 'Bookmark',
+              icon: const Icon(Icons.bookmark_border_rounded),
+              onSelected: _handleBookmarkAction,
+              itemBuilder: (context) {
+                final hasBookmark = _bookmarkAnnotation() != null;
+
+                return [
+                  const PopupMenuItem<_BookmarkAction>(
+                    value: _BookmarkAction.save,
+                    child: Text('Save bookmark'),
+                  ),
+                  PopupMenuItem<_BookmarkAction>(
+                    value: _BookmarkAction.jump,
+                    enabled: hasBookmark,
+                    child: const Text('Go to bookmark'),
+                  ),
+                ];
+              },
+            ),
+            IconButton(
+              onPressed: _openBookAnnotations,
+              icon: const Icon(Icons.sticky_note_2_outlined),
+              tooltip: 'Book annotations',
+            ),
             IconButton(
               onPressed: _openControls,
               icon: const Icon(Icons.tune_rounded),
@@ -127,74 +194,339 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ),
           ),
         ),
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Scrollbar(
-                controller: _scrollController,
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 56),
-                  child: ValueListenableBuilder<List<ReaderAnnotation>>(
-                    valueListenable: widget.annotationRepository.watchAnnotations(),
-                    builder: (context, annotations, _) {
-                      final bookAnnotations = annotations
-                          .where(
-                            (annotation) => annotation.bookId == widget.book.id,
-                          )
-                          .toList(growable: false);
+        body: SafeArea(child: _buildReaderBody(mode)),
+      ),
+    );
+  }
 
-                      return Column(
-                        children: [
-                          ReaderContent(
-                            text: _readerText,
-                            annotations: bookAnnotations,
-                            textColor: mode.textColor,
-                            fontSize: _fontSize,
-                            lineHeight: _lineHeight,
-                            maxWidth: _textMaxWidth,
-                            focusedAnnotationId: _focusedAnnotationId,
-                            onSelectionChanged: _handleTextSelectionChanged,
-                          ),
-                          ReaderAnnotationsSection(
-                            annotations: bookAnnotations,
-                            textColor: mode.textColor,
-                            mutedColor: mode.mutedColor,
-                            surfaceColor: mode.textColor.withValues(alpha: 0.05),
-                            borderColor: mode.textColor.withValues(alpha: 0.10),
-                            maxWidth: _textMaxWidth,
-                            onTap: scrollToAnnotation,
-                            onDelete: _deleteAnnotation,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ),
-              _ReaderEdgeFade(
-                alignment: Alignment.topCenter,
-                backgroundColor: mode.backgroundColor,
-              ),
-              _ReaderEdgeFade(
-                alignment: Alignment.bottomCenter,
-                backgroundColor: mode.backgroundColor,
-              ),
-              if (_selection != null)
-                _SelectionActionBar(
-                  backgroundColor: mode.backgroundColor,
-                  textColor: mode.textColor,
-                  borderColor: mode.textColor.withValues(alpha: 0.12),
-                  onHighlight: _openHighlightSheet,
-                  onAddNote: _openAddNoteSheet,
-                  onDismiss: _clearSelection,
-                ),
-            ],
+  Widget _buildReaderBody(ReaderThemeMode mode) {
+    final reader = switch (_sourceType) {
+      BookFileType.pdf => PdfReaderView(
+        filePath: widget.book.filePath,
+        backgroundColor: mode.backgroundColor,
+        controller: _pdfReaderController,
+        initialPage: _openingTarget?.pdfPageNumber,
+        onPositionChanged: _handlePdfPositionChanged,
+        onSelectionChanged: _handleTextSelectionChanged,
+      ),
+      BookFileType.epub => ValueListenableBuilder<List<ReaderAnnotation>>(
+        valueListenable: widget.annotationRepository.watchAnnotations(),
+        builder: (context, annotations, _) {
+          final bookAnnotations = _annotationsForCurrentBook(annotations)
+              .where((annotation) => annotation.isUserAnnotation)
+              .toList(growable: false);
+          _syncDeletedAnnotationState(bookAnnotations);
+
+          return EpubReaderView(
+            filePath: widget.book.filePath,
+            annotations: bookAnnotations,
+            textColor: mode.textColor,
+            fontSize: _fontSize,
+            lineHeight: _lineHeight,
+            maxWidth: _textMaxWidth,
+            focusedAnnotationId: _focusedAnnotationId,
+            controller: _epubReaderController,
+            initialAnnotation: _openingTarget,
+            onPositionChanged: _handleEpubPositionChanged,
+            onSelectionChanged: _handleTextSelectionChanged,
+          );
+        },
+      ),
+      BookFileType.plainText => _buildTextReaderBody(mode),
+    };
+
+    if (_sourceType == BookFileType.plainText) return reader;
+
+    return Stack(
+      children: [
+        reader,
+        _buildPositionBadge(mode),
+        _buildSelectionActionBar(mode),
+      ],
+    );
+  }
+
+  Widget _buildTextReaderBody(ReaderThemeMode mode) {
+    return Stack(
+      children: [
+        Scrollbar(
+          controller: _scrollController,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 56),
+            child: ValueListenableBuilder<List<ReaderAnnotation>>(
+              valueListenable: widget.annotationRepository.watchAnnotations(),
+              builder: (context, annotations, _) {
+                final bookAnnotations = _annotationsForCurrentBook(
+                  annotations,
+                ).where((annotation) => annotation.isUserAnnotation).toList(
+                  growable: false,
+                );
+                _syncDeletedAnnotationState(bookAnnotations);
+
+                return Column(
+                  children: [
+                    ReaderContent(
+                      text: _readerText,
+                      annotations: bookAnnotations,
+                      textColor: mode.textColor,
+                      fontSize: _fontSize,
+                      lineHeight: _lineHeight,
+                      maxWidth: _textMaxWidth,
+                      focusedAnnotationId: _focusedAnnotationId,
+                      onSelectionChanged: _handleTextSelectionChanged,
+                    ),
+                    ReaderAnnotationsSection(
+                      annotations: bookAnnotations,
+                      textColor: mode.textColor,
+                      mutedColor: mode.mutedColor,
+                      surfaceColor: mode.textColor.withValues(alpha: 0.05),
+                      borderColor: mode.textColor.withValues(alpha: 0.10),
+                      maxWidth: _textMaxWidth,
+                      onTap: scrollToAnnotation,
+                      onDelete: _deleteAnnotation,
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
+        _ReaderEdgeFade(
+          alignment: Alignment.topCenter,
+          backgroundColor: mode.backgroundColor,
+        ),
+        _ReaderEdgeFade(
+          alignment: Alignment.bottomCenter,
+          backgroundColor: mode.backgroundColor,
+        ),
+        _buildPositionBadge(mode),
+        _buildSelectionActionBar(mode),
+      ],
+    );
+  }
+
+  Widget _buildPositionBadge(ReaderThemeMode mode) {
+    return Positioned(
+      top: 16,
+      right: 16,
+      child: SafeArea(
+        child: ValueListenableBuilder<String>(
+          valueListenable: _positionLabel,
+          builder: (context, label, _) {
+            return _ReaderPositionBadge(
+              label: label,
+              backgroundColor: mode.backgroundColor,
+              textColor: mode.textColor,
+              borderColor: mode.textColor.withValues(alpha: 0.12),
+            );
+          },
+        ),
       ),
+    );
+  }
+
+  Widget _buildSelectionActionBar(ReaderThemeMode mode) {
+    if (_selection == null) return const SizedBox.shrink();
+
+    return _SelectionActionBar(
+      backgroundColor: mode.backgroundColor,
+      textColor: mode.textColor,
+      borderColor: mode.textColor.withValues(alpha: 0.12),
+      isPdf: _sourceType == BookFileType.pdf,
+      onHighlight: _openHighlightSheet,
+      onAddNote: _openAddNoteSheet,
+      onDismiss: _clearSelection,
+    );
+  }
+
+  List<ReaderAnnotation> _annotationsForCurrentBook(
+    List<ReaderAnnotation> annotations,
+  ) {
+    return annotations
+        .where((annotation) => annotation.bookId == widget.book.id)
+        .toList(growable: false);
+  }
+
+  ReaderAnnotation? _resolveOpeningTarget() {
+    final initial = widget.initialAnnotation;
+    if (initial != null && _annotationById(initial.id) != null) return initial;
+
+    return _readingPositionAnnotation();
+  }
+
+  ReaderAnnotation? _bookmarkAnnotation() {
+    return _annotationById(_bookmarkId);
+  }
+
+  ReaderAnnotation? _readingPositionAnnotation() {
+    return _annotationById(_readingPositionId);
+  }
+
+  ReaderAnnotation? _annotationById(String id) {
+    for (final annotation in widget.annotationRepository.getAnnotations()) {
+      if (annotation.bookId == widget.book.id && annotation.id == id) {
+        return annotation;
+      }
+    }
+
+    return null;
+  }
+
+  void _handleBookmarkAction(_BookmarkAction action) {
+    switch (action) {
+      case _BookmarkAction.save:
+        _saveBookmark();
+      case _BookmarkAction.jump:
+        _jumpToBookmark();
+    }
+  }
+
+  void _saveBookmark() {
+    final locationRef = _sourceType == BookFileType.epub
+        ? _epubReaderController.currentLocationRef() ?? _currentLocationRef
+        : _currentLocationRef;
+    if (locationRef == null) {
+      _showReaderMessage('Open a position before saving a bookmark');
+      return;
+    }
+
+    final now = DateTime.now();
+    widget.annotationRepository.addAnnotation(
+      ReaderAnnotation(
+        id: _bookmarkId,
+        bookId: widget.book.id,
+        selectedText: _bookmarkLabel,
+        noteText: '',
+        type: ReaderAnnotationType.bookmark,
+        colorId: 'yellow',
+        isFavorite: false,
+        createdAt: _bookmarkAnnotation()?.createdAt ?? now,
+        updatedAt: now,
+        locationRef: locationRef,
+      ),
+    );
+
+    _showReaderMessage('Bookmark saved');
+  }
+
+  void _jumpToBookmark() {
+    final bookmark = _bookmarkAnnotation();
+    if (bookmark == null) return;
+
+    _jumpToLocation(bookmark);
+  }
+
+  bool _jumpToLocation(ReaderAnnotation annotation) {
+    switch (_sourceType) {
+      case BookFileType.pdf:
+        final page = annotation.pdfPageNumber;
+        if (page == null) return false;
+        _pdfReaderController.jumpToPage(page);
+        return true;
+      case BookFileType.epub:
+        final didJump = _epubReaderController.jumpToAnnotation(annotation);
+        if (didJump && annotation.isUserAnnotation) {
+          setState(() => _focusedAnnotationId = annotation.id);
+          Future<void>.delayed(const Duration(milliseconds: 1200), () {
+            if (!mounted || _focusedAnnotationId != annotation.id) return;
+            setState(() => _focusedAnnotationId = null);
+          });
+        }
+        return didJump;
+      case BookFileType.plainText:
+        final progress = annotation.epubProgress;
+        if (progress != null && _scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent * progress,
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeOutCubic,
+          );
+          return true;
+        }
+        return _scrollToAnnotation(annotation);
+    }
+  }
+
+  String get _bookmarkLabel {
+    return switch (_sourceType) {
+      BookFileType.pdf => 'Page $_currentPdfPage',
+      BookFileType.epub => 'Progress ${_displayPercent(_currentProgress)}%',
+      BookFileType.plainText => 'Progress ${(_currentProgress * 100).round()}%',
+    };
+  }
+
+  void _openDirectNavigation() {
+    switch (_sourceType) {
+      case BookFileType.pdf:
+        _openPageNavigation();
+      case BookFileType.epub:
+        _openProgressNavigation();
+      case BookFileType.plainText:
+        _openProgressNavigation();
+    }
+  }
+
+  Future<void> _openPageNavigation() async {
+    final totalPages = _currentPdfTotalPages;
+    final page = await showDialog<int>(
+      context: context,
+      builder: (context) => _PageNavigationDialog(
+        initialPage: _currentPdfPage,
+        totalPages: totalPages,
+      ),
+    );
+    if (page == null) return;
+
+    if (totalPages <= 0) {
+      _showReaderMessage('PDF pages are still loading');
+      return;
+    }
+
+    if (page <= 0 || (totalPages > 0 && page > totalPages)) {
+      _showReaderMessage('Enter a page between 1 and $totalPages');
+      return;
+    }
+
+    _pdfReaderController.jumpToPage(page);
+  }
+
+  Future<void> _openProgressNavigation() async {
+    final percent = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return _ProgressNavigationDialog(
+          initialPercent: (_currentProgress * 100).round(),
+        );
+      },
+    );
+    if (percent == null) return;
+
+    if (percent < 0 || percent > 100) {
+      _showReaderMessage('Enter a progress value from 0 to 100');
+      return;
+    }
+
+    final progress = percent / 100;
+    if (_sourceType == BookFileType.epub) {
+      final didJump = _epubReaderController.jumpToProgress(progress);
+      if (!didJump) _showReaderMessage('EPUB progress is still loading');
+    } else if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent * progress,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+      _handleDocumentProgressChanged(progress);
+    }
+  }
+
+  void _showReaderMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -222,6 +554,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
             setState(() => _isWideText = value);
             _updateReadingProgressAfterLayout();
           },
+          supportsTypography: _supportsTypographyControls,
+          supportsTextWidth: _supportsTextWidthControls,
         );
       },
     );
@@ -307,13 +641,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
         isFavorite: draft.isFavorite,
         createdAt: now,
         updatedAt: now,
-        locationRef: '${selection.startIndex}:${selection.endIndex}',
+        locationRef:
+            selection.locationRef ??
+            '${selection.startIndex}:${selection.endIndex}',
       ),
     );
   }
 
-  void _deleteAnnotation(String id) {
-    widget.annotationRepository.deleteAnnotation(id);
+  void _deleteAnnotation(ReaderAnnotation annotation) {
+    widget.annotationRepository.deleteAnnotation(annotation.id);
+    if (!mounted) return;
+
+    setState(() {
+      if (_focusedAnnotationId == annotation.id) _focusedAnnotationId = null;
+      if (_openingTarget?.id == annotation.id) _openingTarget = _resolveOpeningTarget();
+      _selection = null;
+    });
+    _showReaderMessage('Deleted ${annotation.displayTypeLabel.toLowerCase()}');
   }
 
   void _clearSelection() {
@@ -323,10 +667,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _handleInitialAnnotation() {
     if (!mounted || _didHandleInitialAnnotation) return;
 
-    final annotation = widget.initialAnnotation;
+    final annotation = _openingTarget;
     if (annotation == null) return;
 
-    if (_scrollToAnnotation(annotation)) {
+    if (_jumpToLocation(annotation)) {
       _didHandleInitialAnnotation = true;
       return;
     }
@@ -338,7 +682,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void scrollToAnnotation(ReaderAnnotation annotation) {
-    _scrollToAnnotation(annotation);
+    _jumpToLocation(annotation);
   }
 
   bool _scrollToAnnotation(ReaderAnnotation annotation) {
@@ -369,7 +713,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _scheduleInitialAnnotationJump() {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleInitialAnnotation());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleInitialAnnotation(),
+    );
   }
 
   double _scrollOffsetForAnnotation({
@@ -412,7 +758,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
     final lineHeight = _fontSize * _lineHeight;
     final viewportHeight = _scrollController.position.viewportDimension;
-    final centeredOffset = caretOffset.dy + 24 - ((viewportHeight - lineHeight) / 2);
+    final centeredOffset =
+        caretOffset.dy + 24 - ((viewportHeight - lineHeight) / 2);
 
     return centeredOffset.clamp(0.0, maxExtent).toDouble();
   }
@@ -425,15 +772,171 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final progress = maxExtent <= 0 ? 0.0 : position.pixels / maxExtent;
     final clampedProgress = progress.clamp(0.0, 1.0).toDouble();
 
-    if ((clampedProgress - _readingProgress.value).abs() < 0.001) return;
-
-    _readingProgress.value = clampedProgress;
+    if ((clampedProgress - _readingProgress.value).abs() >= 0.001) {
+      _readingProgress.value = clampedProgress;
+    }
+    _currentProgress = clampedProgress;
+    _currentLocationRef = 'epub:progress=${clampedProgress.toStringAsFixed(4)}';
+    _positionLabel.value = 'Progress ${(clampedProgress * 100).round()}%';
+    _saveReadingPosition();
   }
 
   void _updateReadingProgressAfterLayout() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _updateReadingProgress();
     });
+  }
+
+  void _handleDocumentProgressChanged(double value) {
+    final clampedProgress = value.clamp(0.0, 1.0).toDouble();
+    if ((clampedProgress - _readingProgress.value).abs() >= 0.001) {
+      _readingProgress.value = clampedProgress;
+    }
+
+    _currentProgress = clampedProgress;
+    _currentLocationRef = 'epub:progress=${clampedProgress.toStringAsFixed(4)}';
+    _positionLabel.value = 'Progress ${(clampedProgress * 100).round()}%';
+    _saveReadingPosition();
+  }
+
+  void _handleEpubPositionChanged(EpubReaderPosition position) {
+    final progress = position.progress;
+    if ((progress - _readingProgress.value).abs() >= 0.001) {
+      _readingProgress.value = progress;
+    }
+
+    _currentProgress = progress;
+    _currentLocationRef = position.locationRef;
+    _positionLabel.value = position.label;
+    _saveReadingPosition();
+  }
+
+  void _handlePdfPositionChanged(PdfReaderPosition position) {
+    final progress = position.progress;
+    if ((progress - _readingProgress.value).abs() >= 0.001) {
+      _readingProgress.value = progress;
+    }
+
+    _currentProgress = progress;
+    _currentPdfPage = position.currentPage;
+    _currentPdfTotalPages = position.totalPages;
+    _currentLocationRef = 'pdf:page=${position.currentPage}';
+    _positionLabel.value = position.label;
+    _saveReadingPosition();
+  }
+
+  void _saveReadingPosition() {
+    final locationRef = _currentLocationRef;
+    if (locationRef == null ||
+        locationRef == _lastSavedLocationRef ||
+        locationRef == _pendingReadingLocationRef) {
+      return;
+    }
+
+    _pendingReadingLocationRef = locationRef;
+    _readingPositionSaveTimer ??= Timer(
+      _readingPositionSaveDelay,
+      _commitReadingPosition,
+    );
+  }
+
+  void _commitReadingPosition() {
+    final locationRef = _pendingReadingLocationRef;
+    _pendingReadingLocationRef = null;
+    _readingPositionSaveTimer?.cancel();
+    _readingPositionSaveTimer = null;
+
+    if (locationRef == null || locationRef == _lastSavedLocationRef) return;
+
+    final now = DateTime.now();
+    final previous = _readingPositionAnnotation();
+    _lastSavedLocationRef = locationRef;
+    widget.annotationRepository.addAnnotation(
+      ReaderAnnotation(
+        id: _readingPositionId,
+        bookId: widget.book.id,
+        selectedText: 'Last reading position',
+        noteText: '',
+        type: ReaderAnnotationType.readingPosition,
+        colorId: 'yellow',
+        isFavorite: false,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+        locationRef: locationRef,
+      ),
+    );
+  }
+
+  void _openBookAnnotations() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (context) {
+        final mode = _themeMode;
+
+        return ValueListenableBuilder<List<ReaderAnnotation>>(
+          valueListenable: widget.annotationRepository.watchAnnotations(),
+          builder: (context, annotations, _) {
+            final bookAnnotations = _annotationsForCurrentBook(annotations)
+                .where((annotation) => annotation.isUserAnnotation)
+                .toList(growable: false);
+
+            if (bookAnnotations.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(20, 18, 20, 28),
+                child: Text('No notes, highlights, or bookmarks yet.'),
+              );
+            }
+
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+              child: ReaderAnnotationsSection(
+                annotations: bookAnnotations,
+                textColor: mode.textColor,
+                mutedColor: mode.mutedColor,
+                surfaceColor: mode.textColor.withValues(alpha: 0.05),
+                borderColor: mode.textColor.withValues(alpha: 0.10),
+                maxWidth: 720,
+                onTap: (annotation) {
+                  Navigator.of(context).pop();
+                  _jumpToLocation(annotation);
+                },
+                onDelete: (annotation) {
+                  Navigator.of(context).pop();
+                  _deleteAnnotation(annotation);
+                },
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _syncDeletedAnnotationState(List<ReaderAnnotation> annotations) {
+    final ids = annotations.map((annotation) => annotation.id).toSet();
+    final focusedWasDeleted =
+        _focusedAnnotationId != null && !ids.contains(_focusedAnnotationId);
+    final targetWasDeleted =
+        _openingTarget != null &&
+        _openingTarget!.isUserAnnotation &&
+        !ids.contains(_openingTarget!.id);
+    if (!focusedWasDeleted && !targetWasDeleted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      setState(() {
+        if (focusedWasDeleted) _focusedAnnotationId = null;
+        if (targetWasDeleted) _openingTarget = _resolveOpeningTarget();
+      });
+    });
+  }
+
+  int _displayPercent(double progress) {
+    return (progress.clamp(0.0, 1.0) * 100).floor();
   }
 }
 
@@ -468,11 +971,165 @@ class _ReaderEdgeFade extends StatelessWidget {
   }
 }
 
+enum _BookmarkAction { save, jump }
+
+class _PageNavigationDialog extends StatefulWidget {
+  const _PageNavigationDialog({
+    required this.initialPage,
+    required this.totalPages,
+  });
+
+  final int initialPage;
+  final int totalPages;
+
+  @override
+  State<_PageNavigationDialog> createState() => _PageNavigationDialogState();
+}
+
+class _PageNavigationDialogState extends State<_PageNavigationDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialPage.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Go to page'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          labelText: widget.totalPages > 0 ? 'Page 1-${widget.totalPages}' : 'Page',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Go'),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    final value = int.tryParse(_controller.text.trim());
+    Navigator.of(context).pop(value);
+  }
+}
+
+class _ProgressNavigationDialog extends StatefulWidget {
+  const _ProgressNavigationDialog({required this.initialPercent});
+
+  final int initialPercent;
+
+  @override
+  State<_ProgressNavigationDialog> createState() {
+    return _ProgressNavigationDialogState();
+  }
+}
+
+class _ProgressNavigationDialogState extends State<_ProgressNavigationDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialPercent.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Go to progress'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(labelText: 'Progress 0-100%'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Go'),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    final value = int.tryParse(_controller.text.trim());
+    Navigator.of(context).pop(value);
+  }
+}
+
+class _ReaderPositionBadge extends StatelessWidget {
+  const _ReaderPositionBadge({
+    required this.label,
+    required this.backgroundColor,
+    required this.textColor,
+    required this.borderColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color textColor;
+  final Color borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: textColor,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SelectionActionBar extends StatelessWidget {
   const _SelectionActionBar({
     required this.backgroundColor,
     required this.textColor,
     required this.borderColor,
+    required this.isPdf,
     required this.onHighlight,
     required this.onAddNote,
     required this.onDismiss,
@@ -481,6 +1138,7 @@ class _SelectionActionBar extends StatelessWidget {
   final Color backgroundColor;
   final Color textColor;
   final Color borderColor;
+  final bool isPdf;
   final VoidCallback onHighlight;
   final VoidCallback onAddNote;
   final VoidCallback onDismiss;
@@ -507,27 +1165,42 @@ class _SelectionActionBar extends StatelessWidget {
               ],
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextButton.icon(
-                    onPressed: onHighlight,
-                    icon: const Icon(Icons.border_color_rounded, size: 18),
-                    label: const Text('Highlight'),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        onPressed: onHighlight,
+                        icon: const Icon(Icons.border_color_rounded, size: 18),
+                        label: const Text('Highlight'),
+                      ),
+                      const SizedBox(width: 4),
+                      FilledButton.tonalIcon(
+                        onPressed: onAddNote,
+                        icon: const Icon(Icons.note_add_outlined, size: 18),
+                        label: const Text('Note'),
+                      ),
+                      const SizedBox(width: 2),
+                      IconButton(
+                        onPressed: onDismiss,
+                        icon: Icon(Icons.close_rounded, color: textColor),
+                        tooltip: 'Dismiss',
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                  FilledButton.tonalIcon(
-                    onPressed: onAddNote,
-                    icon: const Icon(Icons.note_add_outlined, size: 18),
-                    label: const Text('Note'),
-                  ),
-                  const SizedBox(width: 2),
-                  IconButton(
-                    onPressed: onDismiss,
-                    icon: Icon(Icons.close_rounded, color: textColor),
-                    tooltip: 'Dismiss',
-                  ),
+                  if (isPdf)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
+                      child: Text(
+                        'Saved in Notes; PDF pages are not marked yet.',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: textColor.withValues(alpha: 0.68),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

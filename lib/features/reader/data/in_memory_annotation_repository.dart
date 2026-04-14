@@ -30,6 +30,16 @@ class InMemoryAnnotationRepository implements AnnotationRepository {
 
   @override
   void addAnnotation(ReaderAnnotation annotation) {
+    final existingIndex = _annotations.value.indexWhere(
+      (item) => item.id == annotation.id,
+    );
+    if (existingIndex != -1) {
+      final updated = List<ReaderAnnotation>.of(_annotations.value);
+      updated[existingIndex] = annotation;
+      _annotations.value = List<ReaderAnnotation>.unmodifiable(updated);
+      return;
+    }
+
     _annotations.value = List<ReaderAnnotation>.unmodifiable([
       annotation,
       ..._annotations.value,
@@ -40,6 +50,13 @@ class InMemoryAnnotationRepository implements AnnotationRepository {
   void deleteAnnotation(String id) {
     _annotations.value = List<ReaderAnnotation>.unmodifiable(
       _annotations.value.where((annotation) => annotation.id != id),
+    );
+  }
+
+  @override
+  void deleteAnnotationsForBook(String bookId) {
+    _annotations.value = List<ReaderAnnotation>.unmodifiable(
+      _annotations.value.where((annotation) => annotation.bookId != bookId),
     );
   }
 }

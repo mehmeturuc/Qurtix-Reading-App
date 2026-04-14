@@ -12,4 +12,6 @@ abstract class AnnotationRepository {
   void addAnnotation(ReaderAnnotation annotation);
 
   void deleteAnnotation(String id);
+
+  void deleteAnnotationsForBook(String bookId);
 }

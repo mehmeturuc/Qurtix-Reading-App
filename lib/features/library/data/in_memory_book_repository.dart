@@ -23,10 +23,25 @@ class InMemoryBookRepository implements BookRepository {
   }
 
   @override
+  void addBook(Book book) {
+    final existingIndex = _books.indexWhere((item) => item.id == book.id);
+    if (existingIndex == -1) {
+      _books.insert(0, book);
+    } else {
+      _books[existingIndex] = book;
+    }
+  }
+
+  @override
   void markOpened(String id, DateTime openedAt) {
     final index = _books.indexWhere((book) => book.id == id);
     if (index == -1) return;
 
     _books[index] = _books[index].copyWith(lastOpenedAt: openedAt);
+  }
+
+  @override
+  void deleteBook(String id) {
+    _books.removeWhere((book) => book.id == id);
   }
 }

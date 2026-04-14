@@ -34,6 +34,7 @@ class _HomeShellState extends State<HomeShell> {
           LibraryScreen(
             bookRepository: widget.bookRepository,
             annotationRepository: widget.annotationRepository,
+            listRepository: widget.listRepository,
           ),
           NotesScreen(
             bookRepository: widget.bookRepository,

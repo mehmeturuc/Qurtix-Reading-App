@@ -33,12 +33,30 @@ class IsarBookRepository implements BookRepository {
   }
 
   @override
+  void addBook(Book book) {
+    final existing = _entityByDomainId(book.id);
+    final entity = _toEntity(book)..isarId = existing?.isarId ?? Isar.autoIncrement;
+
+    _isar.writeTxnSync(() => _collection.putSync(entity));
+    _books = _loadBooks();
+  }
+
+  @override
   void markOpened(String id, DateTime openedAt) {
     final entity = _entityByDomainId(id);
     if (entity == null) return;
 
     entity.lastOpenedAtMillis = openedAt.millisecondsSinceEpoch;
     _isar.writeTxnSync(() => _collection.putSync(entity));
+    _books = _loadBooks();
+  }
+
+  @override
+  void deleteBook(String id) {
+    final entity = _entityByDomainId(id);
+    if (entity == null) return;
+
+    _isar.writeTxnSync(() => _collection.deleteSync(entity.isarId));
     _books = _loadBooks();
   }
 
@@ -70,10 +88,10 @@ class IsarBookRepository implements BookRepository {
     return IsarBookEntity()
       ..domainId = book.id
       ..title = book.title
-      ..author = book.author
+      ..author = book.author ?? ''
       ..filePath = book.filePath
       ..fileType = book.fileType
-      ..coverPath = book.coverPath
+      ..coverPath = book.coverPath ?? ''
       ..createdAt = book.createdAt
       ..lastOpenedAtMillis = book.lastOpenedAt?.millisecondsSinceEpoch ?? -1;
   }
@@ -86,10 +104,10 @@ class IsarBookRepository implements BookRepository {
     return Book(
       id: entity.domainId,
       title: entity.title,
-      author: entity.author,
+      author: entity.author.isEmpty ? null : entity.author,
       filePath: entity.filePath,
       fileType: entity.fileType,
-      coverPath: entity.coverPath,
+      coverPath: entity.coverPath.isEmpty ? null : entity.coverPath,
       createdAt: entity.createdAt,
       lastOpenedAt: lastOpenedAt,
     );

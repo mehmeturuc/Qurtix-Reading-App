@@ -2,22 +2,33 @@ class Book {
   const Book({
     required this.id,
     required this.title,
-    required this.author,
+    this.author,
     required this.filePath,
     required this.fileType,
-    required this.coverPath,
+    this.coverPath,
     required this.createdAt,
     this.lastOpenedAt,
   });
 
   final String id;
   final String title;
-  final String author;
+  final String? author;
   final String filePath;
   final String fileType;
-  final String coverPath;
+  final String? coverPath;
   final DateTime createdAt;
   final DateTime? lastOpenedAt;
+
+  BookFileType get sourceType => BookFileType.from(fileType);
+
+  bool get isDocumentBacked {
+    return filePath.isNotEmpty && !filePath.startsWith('local/books/');
+  }
+
+  String get displayAuthor {
+    final value = author?.trim();
+    return value == null || value.isEmpty ? 'Unknown author' : value;
+  }
 
   Book copyWith({
     String? id,
@@ -39,5 +50,27 @@ class Book {
       createdAt: createdAt ?? this.createdAt,
       lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
     );
+  }
+}
+
+enum BookFileType {
+  plainText,
+  pdf,
+  epub;
+
+  static BookFileType from(String value) {
+    return switch (value.trim().toLowerCase()) {
+      'pdf' => BookFileType.pdf,
+      'epub' => BookFileType.epub,
+      _ => BookFileType.plainText,
+    };
+  }
+
+  String get label {
+    return switch (this) {
+      BookFileType.plainText => 'TEXT',
+      BookFileType.pdf => 'PDF',
+      BookFileType.epub => 'EPUB',
+    };
   }
 }

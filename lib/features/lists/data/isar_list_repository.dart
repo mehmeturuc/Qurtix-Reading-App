@@ -30,11 +30,44 @@ class IsarListRepository implements ListRepository {
     _lists = _loadLists();
   }
 
+  @override
+  String? getCollectionForBook(String bookId) {
+    final entity = _entityByDomainId(_bookCollectionId(bookId));
+    final value = entity?.name.trim();
+
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  @override
+  void setBookCollection(String bookId, String? collectionName) {
+    final id = _bookCollectionId(bookId);
+    final existing = _entityByDomainId(id);
+    final value = collectionName?.trim();
+
+    if (value == null || value.isEmpty) {
+      if (existing != null) {
+        _isar.writeTxnSync(() => _collection.deleteSync(existing.isarId));
+      }
+      _lists = _loadLists();
+      return;
+    }
+
+    final entity = IsarCustomListEntity()
+      ..isarId = existing?.isarId ?? Isar.autoIncrement
+      ..domainId = id
+      ..name = value
+      ..createdAt = existing?.createdAt ?? DateTime.now();
+
+    _isar.writeTxnSync(() => _collection.putSync(entity));
+    _lists = _loadLists();
+  }
+
   List<CustomList> _loadLists() {
     return _collection
         .where()
         .findAllSync()
         .map(_toDomain)
+        .where((list) => !list.id.startsWith('book-collection:'))
         .toList(growable: false)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
@@ -61,4 +94,6 @@ class IsarListRepository implements ListRepository {
       createdAt: entity.createdAt,
     );
   }
+
+  String _bookCollectionId(String bookId) => 'book-collection:$bookId';
 }

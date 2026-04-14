@@ -57,6 +57,20 @@ class IsarAnnotationRepository implements AnnotationRepository {
     _reload();
   }
 
+  @override
+  void deleteAnnotationsForBook(String bookId) {
+    final ids = _collection
+        .where()
+        .findAllSync()
+        .where((entity) => entity.bookId == bookId)
+        .map((entity) => entity.isarId)
+        .toList(growable: false);
+    if (ids.isEmpty) return;
+
+    _isar.writeTxnSync(() => _collection.deleteAllSync(ids));
+    _reload();
+  }
+
   void dispose() {
     _subscription.cancel();
     _annotations.dispose();
