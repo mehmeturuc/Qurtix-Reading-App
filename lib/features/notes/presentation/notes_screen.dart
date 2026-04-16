@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../shared/design/app_design.dart';
@@ -31,11 +33,32 @@ class _NotesScreenState extends State<NotesScreen> {
   String? _bookId;
   _AnnotationTypeFilter _typeFilter = _AnnotationTypeFilter.all;
   bool _favoritesOnly = false;
+  bool _isLoadingAnnotations = false;
+  late List<Book> _books;
+  late Map<String, String> _bookTitles;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshBookCache();
+    _scheduleAnnotationLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant NotesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.bookRepository != widget.bookRepository) {
+      _refreshBookCache();
+    }
+    if (oldWidget.annotationRepository != widget.annotationRepository) {
+      _isLoadingAnnotations = false;
+      _scheduleAnnotationLoad();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final books = widget.bookRepository.getBooks();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notes'),
@@ -54,44 +77,52 @@ class _NotesScreenState extends State<NotesScreen> {
             valueListenable: widget.annotationRepository.watchAnnotations(),
             builder: (context, annotations, _) {
               final filtered = _applyFilters(annotations);
+              final isLoading = _isLoadingAnnotations && annotations.isEmpty;
 
-              return ListView(
+              return ListView.builder(
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.x5,
                   AppSpacing.x4,
                   AppSpacing.x5,
                   28,
                 ),
-                children: [
-                  _NotesFilters(
-                    books: books,
-                    selectedBookId: _bookId,
-                    typeFilter: _typeFilter,
-                    favoritesOnly: _favoritesOnly,
-                    onBookChanged: (value) => setState(() => _bookId = value),
-                    onTypeChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _typeFilter = value);
-                    },
-                    onFavoritesChanged: (value) {
-                      setState(() => _favoritesOnly = value);
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.x5),
-                  if (filtered.isEmpty)
-                    const _EmptyNotes()
-                  else
-                    for (final annotation in filtered)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.x3),
-                        child: _NoteCard(
-                          annotation: annotation,
-                          bookTitle: _bookTitle(annotation.bookId),
-                          onTap: () => _openAnnotation(annotation),
-                          onDelete: () => _deleteAnnotation(annotation),
-                        ),
-                      ),
-                ],
+                itemCount: (filtered.isEmpty || isLoading) ? 3 : filtered.length + 2,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return _NotesFilters(
+                      books: _books,
+                      selectedBookId: _bookId,
+                      typeFilter: _typeFilter,
+                      favoritesOnly: _favoritesOnly,
+                      onBookChanged: (value) => setState(() => _bookId = value),
+                      onTypeChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _typeFilter = value);
+                      },
+                      onFavoritesChanged: (value) {
+                        setState(() => _favoritesOnly = value);
+                      },
+                    );
+                  }
+
+                  if (index == 1) {
+                    return const SizedBox(height: AppSpacing.x5);
+                  }
+
+                  if (isLoading) return const _LoadingNotes();
+                  if (filtered.isEmpty) return const _EmptyNotes();
+
+                  final annotation = filtered[index - 2];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.x3),
+                    child: _NoteCard(
+                      annotation: annotation,
+                      bookTitle: _bookTitles[annotation.bookId] ?? 'Unknown book',
+                      onTap: () => _openAnnotation(annotation),
+                      onDelete: () => _deleteAnnotation(annotation),
+                    ),
+                  );
+                },
               );
             },
           ),
@@ -119,10 +150,6 @@ class _NotesScreenState extends State<NotesScreen> {
     }).toList(growable: false);
   }
 
-  String _bookTitle(String bookId) {
-    return widget.bookRepository.getBookById(bookId)?.title ?? 'Unknown book';
-  }
-
   void _openAnnotation(ReaderAnnotation annotation) {
     final book = widget.bookRepository.getBookById(annotation.bookId);
     if (book == null) return;
@@ -139,6 +166,39 @@ class _NotesScreenState extends State<NotesScreen> {
     );
   }
 
+  void _refreshBookCache() {
+    _books = widget.bookRepository.getBooks();
+    _bookTitles = {
+      for (final book in _books) book.id: book.title,
+    };
+  }
+
+  void _scheduleAnnotationLoad() {
+    if (widget.annotationRepository.isLoaded) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.annotationRepository.isLoaded) return;
+
+      setState(() => _isLoadingAnnotations = true);
+      unawaited(_loadAnnotations());
+    });
+  }
+
+  Future<void> _loadAnnotations() async {
+    try {
+      await widget.annotationRepository.ensureLoaded();
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load notes')),
+      );
+    }
+    if (!mounted) return;
+
+    setState(() => _isLoadingAnnotations = false);
+  }
+
   void _deleteAnnotation(ReaderAnnotation annotation) {
     widget.annotationRepository.deleteAnnotation(annotation.id);
     if (!mounted) return;
@@ -153,7 +213,7 @@ class _NotesScreenState extends State<NotesScreen> {
       context: context,
       builder: (context) {
         return _ExportAnnotationsDialog(
-          books: widget.bookRepository.getBooks(),
+          books: _books,
           initialBookId: _bookId,
           initialFavoritesOnly: _favoritesOnly,
         );
@@ -561,6 +621,39 @@ class _EmptyNotes extends StatelessWidget {
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingNotes extends StatelessWidget {
+  const _LoadingNotes();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 80),
+      child: Column(
+        children: [
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.x4),
+          Text(
+            'Loading notes',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],

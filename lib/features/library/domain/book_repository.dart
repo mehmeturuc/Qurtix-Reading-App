@@ -9,5 +9,5 @@ abstract class BookRepository {
 
   void markOpened(String id, DateTime openedAt);
 
-  void deleteBook(String id);
+  Future<void> deleteBook(String id);
 }

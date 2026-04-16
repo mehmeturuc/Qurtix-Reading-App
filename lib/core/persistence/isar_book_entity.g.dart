@@ -63,7 +63,21 @@ const IsarBookEntitySchema = CollectionSchema(
   deserialize: _isarBookEntityDeserialize,
   deserializeProp: _isarBookEntityDeserializeProp,
   idName: r'isarId',
-  indexes: {},
+  indexes: {
+    r'domainId': IndexSchema(
+      id: -9138809277110658179,
+      name: r'domainId',
+      unique: true,
+      replace: true,
+      properties: [
+        IndexPropertySchema(
+          name: r'domainId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    )
+  },
   links: {},
   embeddedSchemas: {},
   getId: _isarBookEntityGetId,
@@ -78,8 +92,18 @@ int _isarBookEntityEstimateSize(
   Map<Type, List<int>> allOffsets,
 ) {
   var bytesCount = offsets.last;
-  bytesCount += 3 + object.author.length * 3;
-  bytesCount += 3 + object.coverPath.length * 3;
+  {
+    final value = object.author;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final value = object.coverPath;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.domainId.length * 3;
   bytesCount += 3 + object.filePath.length * 3;
   bytesCount += 3 + object.fileType.length * 3;
@@ -110,8 +134,8 @@ IsarBookEntity _isarBookEntityDeserialize(
   Map<Type, List<int>> allOffsets,
 ) {
   final object = IsarBookEntity();
-  object.author = reader.readString(offsets[0]);
-  object.coverPath = reader.readString(offsets[1]);
+  object.author = reader.readStringOrNull(offsets[0]);
+  object.coverPath = reader.readStringOrNull(offsets[1]);
   object.createdAt = reader.readDateTime(offsets[2]);
   object.domainId = reader.readString(offsets[3]);
   object.filePath = reader.readString(offsets[4]);
@@ -130,9 +154,9 @@ P _isarBookEntityDeserializeProp<P>(
 ) {
   switch (propertyId) {
     case 0:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 1:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 2:
       return (reader.readDateTime(offset)) as P;
     case 3:
@@ -161,6 +185,61 @@ List<IsarLinkBase<dynamic>> _isarBookEntityGetLinks(IsarBookEntity object) {
 void _isarBookEntityAttach(
     IsarCollection<dynamic> col, Id id, IsarBookEntity object) {
   object.isarId = id;
+}
+
+extension IsarBookEntityByIndex on IsarCollection<IsarBookEntity> {
+  Future<IsarBookEntity?> getByDomainId(String domainId) {
+    return getByIndex(r'domainId', [domainId]);
+  }
+
+  IsarBookEntity? getByDomainIdSync(String domainId) {
+    return getByIndexSync(r'domainId', [domainId]);
+  }
+
+  Future<bool> deleteByDomainId(String domainId) {
+    return deleteByIndex(r'domainId', [domainId]);
+  }
+
+  bool deleteByDomainIdSync(String domainId) {
+    return deleteByIndexSync(r'domainId', [domainId]);
+  }
+
+  Future<List<IsarBookEntity?>> getAllByDomainId(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return getAllByIndex(r'domainId', values);
+  }
+
+  List<IsarBookEntity?> getAllByDomainIdSync(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return getAllByIndexSync(r'domainId', values);
+  }
+
+  Future<int> deleteAllByDomainId(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return deleteAllByIndex(r'domainId', values);
+  }
+
+  int deleteAllByDomainIdSync(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return deleteAllByIndexSync(r'domainId', values);
+  }
+
+  Future<Id> putByDomainId(IsarBookEntity object) {
+    return putByIndex(r'domainId', object);
+  }
+
+  Id putByDomainIdSync(IsarBookEntity object, {bool saveLinks = true}) {
+    return putByIndexSync(r'domainId', object, saveLinks: saveLinks);
+  }
+
+  Future<List<Id>> putAllByDomainId(List<IsarBookEntity> objects) {
+    return putAllByIndex(r'domainId', objects);
+  }
+
+  List<Id> putAllByDomainIdSync(List<IsarBookEntity> objects,
+      {bool saveLinks = true}) {
+    return putAllByIndexSync(r'domainId', objects, saveLinks: saveLinks);
+  }
 }
 
 extension IsarBookEntityQueryWhereSort
@@ -240,13 +319,76 @@ extension IsarBookEntityQueryWhere
       ));
     });
   }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterWhereClause>
+      domainIdEqualTo(String domainId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'domainId',
+        value: [domainId],
+      ));
+    });
+  }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterWhereClause>
+      domainIdNotEqualTo(String domainId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [],
+              upper: [domainId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [domainId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [domainId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [],
+              upper: [domainId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
 }
 
 extension IsarBookEntityQueryFilter
     on QueryBuilder<IsarBookEntity, IsarBookEntity, QFilterCondition> {
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
+      authorIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'author',
+      ));
+    });
+  }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
+      authorIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'author',
+      ));
+    });
+  }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       authorEqualTo(
-    String value, {
+    String? value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -260,7 +402,7 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       authorGreaterThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -276,7 +418,7 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       authorLessThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -292,8 +434,8 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       authorBetween(
-    String lower,
-    String upper, {
+    String? lower,
+    String? upper, {
     bool includeLower = true,
     bool includeUpper = true,
     bool caseSensitive = true,
@@ -381,8 +523,26 @@ extension IsarBookEntityQueryFilter
   }
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
+      coverPathIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'coverPath',
+      ));
+    });
+  }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
+      coverPathIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'coverPath',
+      ));
+    });
+  }
+
+  QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       coverPathEqualTo(
-    String value, {
+    String? value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -396,7 +556,7 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       coverPathGreaterThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -412,7 +572,7 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       coverPathLessThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -428,8 +588,8 @@ extension IsarBookEntityQueryFilter
 
   QueryBuilder<IsarBookEntity, IsarBookEntity, QAfterFilterCondition>
       coverPathBetween(
-    String lower,
-    String upper, {
+    String? lower,
+    String? upper, {
     bool includeLower = true,
     bool includeUpper = true,
     bool caseSensitive = true,
@@ -1529,13 +1689,13 @@ extension IsarBookEntityQueryProperty
     });
   }
 
-  QueryBuilder<IsarBookEntity, String, QQueryOperations> authorProperty() {
+  QueryBuilder<IsarBookEntity, String?, QQueryOperations> authorProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'author');
     });
   }
 
-  QueryBuilder<IsarBookEntity, String, QQueryOperations> coverPathProperty() {
+  QueryBuilder<IsarBookEntity, String?, QQueryOperations> coverPathProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'coverPath');
     });

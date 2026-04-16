@@ -74,7 +74,34 @@ const IsarReaderAnnotationEntitySchema = CollectionSchema(
   deserialize: _isarReaderAnnotationEntityDeserialize,
   deserializeProp: _isarReaderAnnotationEntityDeserializeProp,
   idName: r'isarId',
-  indexes: {},
+  indexes: {
+    r'domainId': IndexSchema(
+      id: -9138809277110658179,
+      name: r'domainId',
+      unique: true,
+      replace: true,
+      properties: [
+        IndexPropertySchema(
+          name: r'domainId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    ),
+    r'bookId': IndexSchema(
+      id: 3567540928881766442,
+      name: r'bookId',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'bookId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    )
+  },
   links: {},
   embeddedSchemas: {},
   getId: _isarReaderAnnotationEntityGetId,
@@ -184,6 +211,65 @@ void _isarReaderAnnotationEntityAttach(
   object.isarId = id;
 }
 
+extension IsarReaderAnnotationEntityByIndex
+    on IsarCollection<IsarReaderAnnotationEntity> {
+  Future<IsarReaderAnnotationEntity?> getByDomainId(String domainId) {
+    return getByIndex(r'domainId', [domainId]);
+  }
+
+  IsarReaderAnnotationEntity? getByDomainIdSync(String domainId) {
+    return getByIndexSync(r'domainId', [domainId]);
+  }
+
+  Future<bool> deleteByDomainId(String domainId) {
+    return deleteByIndex(r'domainId', [domainId]);
+  }
+
+  bool deleteByDomainIdSync(String domainId) {
+    return deleteByIndexSync(r'domainId', [domainId]);
+  }
+
+  Future<List<IsarReaderAnnotationEntity?>> getAllByDomainId(
+      List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return getAllByIndex(r'domainId', values);
+  }
+
+  List<IsarReaderAnnotationEntity?> getAllByDomainIdSync(
+      List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return getAllByIndexSync(r'domainId', values);
+  }
+
+  Future<int> deleteAllByDomainId(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return deleteAllByIndex(r'domainId', values);
+  }
+
+  int deleteAllByDomainIdSync(List<String> domainIdValues) {
+    final values = domainIdValues.map((e) => [e]).toList();
+    return deleteAllByIndexSync(r'domainId', values);
+  }
+
+  Future<Id> putByDomainId(IsarReaderAnnotationEntity object) {
+    return putByIndex(r'domainId', object);
+  }
+
+  Id putByDomainIdSync(IsarReaderAnnotationEntity object,
+      {bool saveLinks = true}) {
+    return putByIndexSync(r'domainId', object, saveLinks: saveLinks);
+  }
+
+  Future<List<Id>> putAllByDomainId(List<IsarReaderAnnotationEntity> objects) {
+    return putAllByIndex(r'domainId', objects);
+  }
+
+  List<Id> putAllByDomainIdSync(List<IsarReaderAnnotationEntity> objects,
+      {bool saveLinks = true}) {
+    return putAllByIndexSync(r'domainId', objects, saveLinks: saveLinks);
+  }
+}
+
 extension IsarReaderAnnotationEntityQueryWhereSort on QueryBuilder<
     IsarReaderAnnotationEntity, IsarReaderAnnotationEntity, QWhere> {
   QueryBuilder<IsarReaderAnnotationEntity, IsarReaderAnnotationEntity,
@@ -261,6 +347,96 @@ extension IsarReaderAnnotationEntityQueryWhere on QueryBuilder<
         upper: upperIsarId,
         includeUpper: includeUpper,
       ));
+    });
+  }
+
+  QueryBuilder<IsarReaderAnnotationEntity, IsarReaderAnnotationEntity,
+      QAfterWhereClause> domainIdEqualTo(String domainId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'domainId',
+        value: [domainId],
+      ));
+    });
+  }
+
+  QueryBuilder<IsarReaderAnnotationEntity, IsarReaderAnnotationEntity,
+      QAfterWhereClause> domainIdNotEqualTo(String domainId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [],
+              upper: [domainId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [domainId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [domainId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'domainId',
+              lower: [],
+              upper: [domainId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<IsarReaderAnnotationEntity, IsarReaderAnnotationEntity,
+      QAfterWhereClause> bookIdEqualTo(String bookId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'bookId',
+        value: [bookId],
+      ));
+    });
+  }
+
+  QueryBuilder<IsarReaderAnnotationEntity, IsarReaderAnnotationEntity,
+      QAfterWhereClause> bookIdNotEqualTo(String bookId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'bookId',
+              lower: [],
+              upper: [bookId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'bookId',
+              lower: [bookId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'bookId',
+              lower: [bookId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'bookId',
+              lower: [],
+              upper: [bookId],
+              includeUpper: false,
+            ));
+      }
     });
   }
 }

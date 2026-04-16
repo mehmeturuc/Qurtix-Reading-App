@@ -44,6 +44,8 @@ class AnnotationExportService {
   final BookRepository _bookRepository;
 
   Future<AnnotationExportResult> export(AnnotationExportRequest request) async {
+    await _annotationRepository.ensureLoaded();
+
     final annotations = _annotationsFor(request);
     final content = _contentFor(request.format, annotations);
     final fileName = _fileName(request);

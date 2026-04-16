@@ -3,7 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'reader_annotation.dart';
 
 abstract class AnnotationRepository {
+  bool get isLoaded;
+
   ValueListenable<List<ReaderAnnotation>> watchAnnotations();
+
+  Future<void> ensureLoaded();
 
   List<ReaderAnnotation> getAnnotations();
 

@@ -24,6 +24,7 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  final Set<int> _loadedTabs = {0};
 
   @override
   Widget build(BuildContext context) {
@@ -31,20 +32,29 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          LibraryScreen(
-            bookRepository: widget.bookRepository,
-            annotationRepository: widget.annotationRepository,
-            listRepository: widget.listRepository,
-          ),
-          NotesScreen(
-            bookRepository: widget.bookRepository,
-            annotationRepository: widget.annotationRepository,
-          ),
+          _loadedTabs.contains(0)
+              ? LibraryScreen(
+                  bookRepository: widget.bookRepository,
+                  annotationRepository: widget.annotationRepository,
+                  listRepository: widget.listRepository,
+                )
+              : const SizedBox.shrink(),
+          _loadedTabs.contains(1)
+              ? NotesScreen(
+                  bookRepository: widget.bookRepository,
+                  annotationRepository: widget.annotationRepository,
+                )
+              : const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        onDestinationSelected: (value) {
+          setState(() {
+            _index = value;
+            _loadedTabs.add(value);
+          });
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.library_books_outlined),

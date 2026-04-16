@@ -61,33 +61,13 @@ class ReaderAnnotation {
     return null;
   }
 
-  String? get epubCfiRange => _epubValue('cfi');
-
-  String? get epubChapter => _epubValue('chapter');
-
   String? get epubChapterPath => _epubDecodedValue('path');
-
-  String? get epubSpinePath => epubChapterPath;
-
-  String? get epubLocation => _epubValue('location');
 
   String? get epubAnchorText => _epubDecodedValue('anchor');
 
   String? get epubPrefixText => _epubDecodedValue('prefix');
 
   String? get epubSuffixText => _epubDecodedValue('suffix');
-
-  int? get epubVirtualPageNumber {
-    final value = int.tryParse(
-      _epubValue('page') ?? _epubValue('pageNumber') ?? '',
-    );
-    return value == null || value <= 0 ? null : value;
-  }
-
-  int? get epubTotalPages {
-    final value = int.tryParse(_epubValue('totalPages') ?? '');
-    return value == null || value <= 0 ? null : value;
-  }
 
   int? get epubSourceOffset {
     final value = int.tryParse(_epubValue('sourceOffset') ?? '');
@@ -100,32 +80,7 @@ class ReaderAnnotation {
   }
 
   int? get epubChapterIndex {
-    final value = int.tryParse(epubChapter ?? '');
-    return value == null || value < 0 ? null : value;
-  }
-
-  double? get epubScrollOffset {
-    final value = double.tryParse(_epubValue('scroll') ?? '');
-    return value == null || value < 0 ? null : value;
-  }
-
-  int? get epubLocationStartIndex {
-    final value = int.tryParse(
-      _epubValue('start') ??
-          _epubValue('index') ??
-          _epubLocationIndex ??
-          _epubLocationParts?.first ??
-          '',
-    );
-
-    return value == null || value < 0 ? null : value;
-  }
-
-  int? get epubLocationEndIndex {
-    final value = int.tryParse(
-      _epubValue('end') ?? _epubLocationParts?.last ?? '',
-    );
-
+    final value = int.tryParse(_epubValue('chapter') ?? '');
     return value == null || value < 0 ? null : value;
   }
 
@@ -140,7 +95,7 @@ class ReaderAnnotation {
   }
 
   int? get locationStartIndex {
-    if (isEpubLocation) return epubLocalStartIndex ?? epubLocationStartIndex;
+    if (isEpubLocation) return epubLocalStartIndex;
 
     final parts = _locationParts;
     if (parts == null) return null;
@@ -151,7 +106,7 @@ class ReaderAnnotation {
 
   int? get locationEndIndex {
     if (isEpubLocation) {
-      return epubLocalEndIndex ?? epubLocalStartIndex ?? epubLocationEndIndex;
+      return epubLocalEndIndex ?? epubLocalStartIndex;
     }
 
     final parts = _locationParts;
@@ -204,23 +159,6 @@ class ReaderAnnotation {
     } on FormatException {
       return value;
     }
-  }
-
-  List<String>? get _epubLocationParts {
-    final location = epubLocation;
-    if (location == null) return null;
-
-    final parts = location.split(':');
-    if (parts.length != 2) return null;
-
-    return parts;
-  }
-
-  String? get _epubLocationIndex {
-    final location = epubLocation;
-    if (location == null || location.contains(':')) return null;
-
-    return location;
   }
 
   List<String>? get _locationParts {

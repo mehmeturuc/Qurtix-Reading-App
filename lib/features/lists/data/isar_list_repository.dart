@@ -6,11 +6,12 @@ import '../domain/list_repository.dart';
 
 class IsarListRepository implements ListRepository {
   IsarListRepository(this._isar) {
-    _lists = _loadLists();
+    _loadState();
   }
 
   final Isar _isar;
   late List<CustomList> _lists;
+  Map<String, String> _bookCollections = const {};
 
   IsarCollection<IsarCustomListEntity> get _collection {
     return _isar.collection<IsarCustomListEntity>();
@@ -27,15 +28,12 @@ class IsarListRepository implements ListRepository {
     final entity = _toEntity(list)..isarId = existing?.isarId ?? Isar.autoIncrement;
 
     _isar.writeTxnSync(() => _collection.putSync(entity));
-    _lists = _loadLists();
+    _upsertCachedList(list);
   }
 
   @override
   String? getCollectionForBook(String bookId) {
-    final entity = _entityByDomainId(_bookCollectionId(bookId));
-    final value = entity?.name.trim();
-
-    return value == null || value.isEmpty ? null : value;
+    return _bookCollections[bookId];
   }
 
   @override
@@ -48,7 +46,7 @@ class IsarListRepository implements ListRepository {
       if (existing != null) {
         _isar.writeTxnSync(() => _collection.deleteSync(existing.isarId));
       }
-      _lists = _loadLists();
+      _removeCachedBookCollection(bookId);
       return;
     }
 
@@ -59,25 +57,33 @@ class IsarListRepository implements ListRepository {
       ..createdAt = existing?.createdAt ?? DateTime.now();
 
     _isar.writeTxnSync(() => _collection.putSync(entity));
-    _lists = _loadLists();
+    _setCachedBookCollection(bookId, value);
   }
 
-  List<CustomList> _loadLists() {
-    return _collection
-        .where()
-        .findAllSync()
-        .map(_toDomain)
-        .where((list) => !list.id.startsWith('book-collection:'))
-        .toList(growable: false)
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  void _loadState() {
+    final lists = <CustomList>[];
+    final bookCollections = <String, String>{};
+
+    for (final entity in _collection.where().findAllSync()) {
+      if (entity.domainId.startsWith('book-collection:')) {
+        final bookId = entity.domainId.substring('book-collection:'.length);
+        final value = entity.name.trim();
+        if (bookId.isNotEmpty && value.isNotEmpty) {
+          bookCollections[bookId] = value;
+        }
+        continue;
+      }
+
+      lists.add(_toDomain(entity));
+    }
+
+    lists.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _lists = lists.toList(growable: false);
+    _bookCollections = Map<String, String>.unmodifiable(bookCollections);
   }
 
   IsarCustomListEntity? _entityByDomainId(String id) {
-    for (final entity in _collection.where().findAllSync()) {
-      if (entity.domainId == id) return entity;
-    }
-
-    return null;
+    return _collection.getByDomainIdSync(id);
   }
 
   IsarCustomListEntity _toEntity(CustomList list) {
@@ -93,6 +99,32 @@ class IsarListRepository implements ListRepository {
       name: entity.name,
       createdAt: entity.createdAt,
     );
+  }
+
+  void _upsertCachedList(CustomList list) {
+    final next = List<CustomList>.of(_lists);
+    final index = next.indexWhere((item) => item.id == list.id);
+    if (index == -1) {
+      next.insert(0, list);
+    } else {
+      next[index] = list;
+    }
+    next.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _lists = next.toList(growable: false);
+  }
+
+  void _setCachedBookCollection(String bookId, String collectionName) {
+    _bookCollections = Map<String, String>.unmodifiable({
+      ..._bookCollections,
+      bookId: collectionName,
+    });
+  }
+
+  void _removeCachedBookCollection(String bookId) {
+    if (!_bookCollections.containsKey(bookId)) return;
+
+    final next = Map<String, String>.of(_bookCollections)..remove(bookId);
+    _bookCollections = Map<String, String>.unmodifiable(next);
   }
 
   String _bookCollectionId(String bookId) => 'book-collection:$bookId';

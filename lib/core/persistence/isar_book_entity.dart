@@ -5,12 +5,15 @@ part 'isar_book_entity.g.dart';
 @collection
 class IsarBookEntity {
   Id isarId = Isar.autoIncrement;
-  late String domainId;
-  late String title;
-  late String author;
-  late String filePath;
-  late String fileType;
-  late String coverPath;
-  late DateTime createdAt;
-  late int lastOpenedAtMillis;
+
+  @Index(unique: true, replace: true)
+  String domainId = '';
+
+  String title = '';
+  String? author;
+  String filePath = '';
+  String fileType = '';
+  String? coverPath;
+  DateTime createdAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int lastOpenedAtMillis = -1;
 }

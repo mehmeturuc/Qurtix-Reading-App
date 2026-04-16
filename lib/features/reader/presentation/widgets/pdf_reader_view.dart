@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -128,6 +129,7 @@ class _PdfSelectionReader extends StatefulWidget {
 }
 
 class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
+  static const int _annotationSyncBatchSize = 12;
   static const double _documentZoomLevel = 1;
   static const double _documentPageSpacing = 12;
   static const PdfPageLayoutMode _documentLayoutMode =
@@ -143,6 +145,8 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
   bool _didJumpToInitialPage = false;
   bool _documentLoaded = false;
   bool _didReportWeakSelection = false;
+  bool _annotationSyncScheduled = false;
+  int _annotationSyncGeneration = 0;
 
   @override
   void didUpdateWidget(covariant _PdfSelectionReader oldWidget) {
@@ -162,6 +166,8 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
       _didJumpToInitialPage = false;
       _documentLoaded = false;
       _didReportWeakSelection = false;
+      _annotationSyncScheduled = false;
+      _annotationSyncGeneration++;
       _visibleAnnotations.clear();
       widget.onSelectionChanged(null);
       return;
@@ -180,6 +186,7 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
   @override
   void dispose() {
     widget.controller?._state = null;
+    _annotationSyncGeneration++;
     _controller.dispose();
     super.dispose();
   }
@@ -332,12 +339,19 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
   }
 
   void _scheduleAnnotationSync() {
+    if (_annotationSyncScheduled) return;
+    _annotationSyncScheduled = true;
+    final generation = ++_annotationSyncGeneration;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _syncVisibleAnnotations();
+      if (!mounted || generation != _annotationSyncGeneration) return;
+
+      _annotationSyncScheduled = false;
+      unawaited(_syncVisibleAnnotations(generation));
     });
   }
 
-  void _syncVisibleAnnotations() {
+  Future<void> _syncVisibleAnnotations(int generation) async {
     if (!_documentLoaded) return;
 
     final nextAnnotations = <String, ReaderAnnotation>{
@@ -348,7 +362,10 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
           annotation.id: annotation,
     };
 
+    var operationsSinceYield = 0;
     for (final entry in _visibleAnnotations.entries.toList()) {
+      if (!mounted || generation != _annotationSyncGeneration) return;
+
       final current = nextAnnotations[entry.key];
       if (current != null &&
           _annotationSignature(current) == entry.value.subject) {
@@ -357,9 +374,15 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
 
       _controller.removeAnnotation(entry.value);
       _visibleAnnotations.remove(entry.key);
+      operationsSinceYield++;
+      if (operationsSinceYield >= _annotationSyncBatchSize) {
+        operationsSinceYield = 0;
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     for (final annotation in nextAnnotations.values) {
+      if (!mounted || generation != _annotationSyncGeneration) return;
       if (_visibleAnnotations.containsKey(annotation.id)) continue;
 
       final visibleAnnotation = _highlightAnnotationFor(annotation);
@@ -367,6 +390,11 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
 
       _visibleAnnotations[annotation.id] = visibleAnnotation;
       _controller.addAnnotation(visibleAnnotation);
+      operationsSinceYield++;
+      if (operationsSinceYield >= _annotationSyncBatchSize) {
+        operationsSinceYield = 0;
+        await Future<void>.delayed(Duration.zero);
+      }
     }
   }
 

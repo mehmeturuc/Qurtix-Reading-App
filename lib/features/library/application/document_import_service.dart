@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -32,6 +33,7 @@ class DocumentImportService {
     };
 
     if (fileType == BookFileType.plainText) return null;
+    if (!_isSupportedDocument(sourceFile, fileType)) return null;
 
     final importedPath = await _copyIntoLibrary(sourceFile, pickedFile.name);
     final now = DateTime.now();
@@ -70,6 +72,50 @@ class DocumentImportService {
 
     await sourceFile.copy(destinationPath);
     return destinationPath;
+  }
+
+  bool _isSupportedDocument(File file, BookFileType fileType) {
+    final length = file.lengthSync();
+    if (length <= 8) return false;
+
+    final sampleLength = length < 4096 ? length : 4096;
+    final bytes = file.openSync()..setPositionSync(0);
+    try {
+      final sample = bytes.readSync(sampleLength);
+
+      return switch (fileType) {
+        BookFileType.pdf => _looksLikePdf(sample),
+        BookFileType.epub => _looksLikeEpub(sample),
+        BookFileType.plainText => false,
+      };
+    } finally {
+      bytes.closeSync();
+    }
+  }
+
+  bool _looksLikePdf(List<int> bytes) {
+    if (bytes.length < 5) return false;
+
+    final header = ascii.decode(
+      bytes.take(1024).toList(growable: false),
+      allowInvalid: true,
+    );
+
+    return header.contains('%PDF-');
+  }
+
+  bool _looksLikeEpub(List<int> bytes) {
+    if (bytes.length < 4) return false;
+    if (bytes[0] != 0x50 ||
+        bytes[1] != 0x4B ||
+        bytes[2] != 0x03 ||
+        bytes[3] != 0x04) {
+      return false;
+    }
+
+    final header = latin1.decode(bytes, allowInvalid: true);
+    return header.contains('mimetype') &&
+        header.contains('application/epub+zip');
   }
 
   String _safeFileName(String fileName) {

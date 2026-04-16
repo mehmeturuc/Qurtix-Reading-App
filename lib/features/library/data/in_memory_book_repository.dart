@@ -4,7 +4,7 @@ import 'mock_books.dart';
 
 class InMemoryBookRepository implements BookRepository {
   InMemoryBookRepository({List<Book>? initialBooks})
-      : _books = List<Book>.of(initialBooks ?? mockBooks);
+      : _books = _sortBooksByRecency(initialBooks ?? mockBooks);
 
   final List<Book> _books;
 
@@ -26,10 +26,11 @@ class InMemoryBookRepository implements BookRepository {
   void addBook(Book book) {
     final existingIndex = _books.indexWhere((item) => item.id == book.id);
     if (existingIndex == -1) {
-      _books.insert(0, book);
+      _books.add(book);
     } else {
       _books[existingIndex] = book;
     }
+    _sortCachedBooks();
   }
 
   @override
@@ -38,10 +39,29 @@ class InMemoryBookRepository implements BookRepository {
     if (index == -1) return;
 
     _books[index] = _books[index].copyWith(lastOpenedAt: openedAt);
+    _sortCachedBooks();
   }
 
   @override
-  void deleteBook(String id) {
+  Future<void> deleteBook(String id) async {
     _books.removeWhere((book) => book.id == id);
+  }
+
+  void _sortCachedBooks() {
+    final sorted = _sortBooksByRecency(_books);
+    _books
+      ..clear()
+      ..addAll(sorted);
+  }
+
+  static List<Book> _sortBooksByRecency(Iterable<Book> books) {
+    final next = List<Book>.of(books);
+    next.sort((a, b) {
+      final aDate = a.lastOpenedAt ?? a.createdAt;
+      final bDate = b.lastOpenedAt ?? b.createdAt;
+      return bDate.compareTo(aDate);
+    });
+
+    return next;
   }
 }

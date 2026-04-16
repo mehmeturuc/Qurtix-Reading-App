@@ -35,8 +35,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final books = _filteredBooks(widget.bookRepository.getBooks());
-    final collections = _collections();
+    final allBooks = widget.bookRepository.getBooks();
+    final collectionByBookId = _collectionMapFor(allBooks);
+    final books = _filteredBooks(allBooks, collectionByBookId);
+    final collections = _collections(allBooks, collectionByBookId);
 
     return Scaffold(
       appBar: AppBar(
@@ -126,7 +128,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
                         return BookCard(
                           book: book,
-                          collectionName: _collectionFor(book.id),
+                          collectionName: collectionByBookId[book.id],
                           onTap: () => _openBook(context, book),
                           onActionSelected: (action) {
                             switch (action) {
@@ -163,16 +165,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return BookCard.heightForWidth(tileWidth);
   }
 
-  List<Book> _filteredBooks(List<Book> books) {
+  List<Book> _filteredBooks(
+    List<Book> books,
+    Map<String, String> collectionByBookId,
+  ) {
     final selected = _selectedCollection;
     if (selected == null) return books;
 
     return books
-        .where((book) => _collectionFor(book.id) == selected)
+        .where((book) => collectionByBookId[book.id] == selected)
         .toList(growable: false);
   }
 
-  List<String> _collections() {
+  Map<String, String> _collectionMapFor(List<Book> books) {
+    final values = <String, String>{};
+
+    for (final book in books) {
+      final collection = widget.listRepository.getCollectionForBook(book.id);
+      if (collection != null && collection.isNotEmpty) {
+        values[book.id] = collection;
+      }
+    }
+
+    return values;
+  }
+
+  List<String> _collections(
+    List<Book> books,
+    Map<String, String> collectionByBookId,
+  ) {
     final values = <String>{};
 
     for (final list in widget.listRepository.getLists()) {
@@ -180,16 +201,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (value.isNotEmpty) values.add(value);
     }
 
-    for (final book in widget.bookRepository.getBooks()) {
-      final value = _collectionFor(book.id);
+    for (final book in books) {
+      final value = collectionByBookId[book.id];
       if (value != null && value.isNotEmpty) values.add(value);
     }
 
     return values.toList()..sort();
-  }
-
-  String? _collectionFor(String bookId) {
-    return widget.listRepository.getCollectionForBook(bookId);
   }
 
   Future<void> _importBook() async {
@@ -218,6 +235,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   void _openBook(BuildContext context, Book book) {
     widget.bookRepository.markOpened(book.id, DateTime.now());
+    setState(() {});
 
     Navigator.of(
       context,
@@ -232,11 +250,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _organizeBook(Book book) async {
+    final books = widget.bookRepository.getBooks();
+    final collectionByBookId = _collectionMapFor(books);
     final result = await showDialog<_CollectionEditResult>(
       context: context,
       builder: (_) => _OrganizeBookDialog(
         initialCollection: widget.listRepository.getCollectionForBook(book.id),
-        collections: _collections(),
+        collections: _collections(books, collectionByBookId),
       ),
     );
     if (!mounted) return;
@@ -287,7 +307,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!mounted) return;
 
     final selected = _selectedCollection;
-    final availableCollections = _collections();
+    final books = widget.bookRepository.getBooks();
+    final availableCollections = _collections(books, _collectionMapFor(books));
     setState(() {
       if (selected != null && !availableCollections.contains(selected)) {
         _selectedCollection = null;
@@ -319,9 +340,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     if (shouldDelete != true) return;
 
-    widget.annotationRepository.deleteAnnotationsForBook(book.id);
-    widget.listRepository.setBookCollection(book.id, null);
-    widget.bookRepository.deleteBook(book.id);
+    try {
+      widget.annotationRepository.deleteAnnotationsForBook(book.id);
+      widget.listRepository.setBookCollection(book.id, null);
+      await widget.bookRepository.deleteBook(book.id);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete this book')),
+      );
+      return;
+    }
 
     if (!mounted) return;
     _refreshLibraryState();

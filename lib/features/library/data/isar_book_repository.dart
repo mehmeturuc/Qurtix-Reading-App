@@ -1,4 +1,9 @@
+import 'dart:developer';
+import 'dart:io';
+
 import 'package:isar/isar.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/persistence/isar_collections.dart';
 import '../domain/book.dart';
@@ -35,10 +40,11 @@ class IsarBookRepository implements BookRepository {
   @override
   void addBook(Book book) {
     final existing = _entityByDomainId(book.id);
-    final entity = _toEntity(book)..isarId = existing?.isarId ?? Isar.autoIncrement;
+    final entity = _toEntity(book)
+      ..isarId = existing?.isarId ?? Isar.autoIncrement;
 
     _isar.writeTxnSync(() => _collection.putSync(entity));
-    _books = _loadBooks();
+    _upsertCachedBook(book);
   }
 
   @override
@@ -48,16 +54,17 @@ class IsarBookRepository implements BookRepository {
 
     entity.lastOpenedAtMillis = openedAt.millisecondsSinceEpoch;
     _isar.writeTxnSync(() => _collection.putSync(entity));
-    _books = _loadBooks();
+    _upsertCachedBook(_toDomain(entity));
   }
 
   @override
-  void deleteBook(String id) {
+  Future<void> deleteBook(String id) async {
     final entity = _entityByDomainId(id);
     if (entity == null) return;
 
     _isar.writeTxnSync(() => _collection.deleteSync(entity.isarId));
-    _books = _loadBooks();
+    _books = _books.where((book) => book.id != id).toList(growable: false);
+    await _deleteManagedLocalFile(entity.filePath);
   }
 
   void _seedMockBooksIfNeeded() {
@@ -69,19 +76,69 @@ class IsarBookRepository implements BookRepository {
   }
 
   List<Book> _loadBooks() {
-    return _collection
+    final books = _collection
         .where()
         .findAllSync()
         .map(_toDomain)
         .toList(growable: false);
+
+    return _sortBooksByRecency(books);
   }
 
   IsarBookEntity? _entityByDomainId(String id) {
-    for (final entity in _collection.where().findAllSync()) {
-      if (entity.domainId == id) return entity;
+    return _collection.getByDomainIdSync(id);
+  }
+
+  void _upsertCachedBook(Book book) {
+    final next = List<Book>.of(_books);
+    final index = next.indexWhere((item) => item.id == book.id);
+    if (index == -1) {
+      next.add(book);
+    } else {
+      next[index] = book;
     }
 
-    return null;
+    _books = _sortBooksByRecency(next);
+  }
+
+  List<Book> _sortBooksByRecency(List<Book> books) {
+    final next = List<Book>.of(books);
+    next.sort((a, b) {
+      final aDate = a.lastOpenedAt ?? a.createdAt;
+      final bDate = b.lastOpenedAt ?? b.createdAt;
+      return bDate.compareTo(aDate);
+    });
+
+    return next.toList(growable: false);
+  }
+
+  Future<void> _deleteManagedLocalFile(String filePath) async {
+    if (filePath.trim().isEmpty) return;
+
+    try {
+      final appDirectory = await getApplicationDocumentsDirectory();
+      final importDirectory = Directory(
+        p.join(appDirectory.path, 'qurtix_imports'),
+      );
+      final normalizedImportPath = p.normalize(
+        p.absolute(importDirectory.path),
+      );
+      final normalizedFilePath = p.normalize(p.absolute(filePath));
+
+      if (!p.isWithin(normalizedImportPath, normalizedFilePath)) return;
+
+      final file = File(normalizedFilePath);
+      if (!file.existsSync()) return;
+
+      await file.delete();
+    } catch (error, stackTrace) {
+      log(
+        'Failed to delete managed book file at $filePath',
+        name: 'IsarBookRepository',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   IsarBookEntity _toEntity(Book book) {
@@ -101,13 +158,16 @@ class IsarBookRepository implements BookRepository {
         ? null
         : DateTime.fromMillisecondsSinceEpoch(entity.lastOpenedAtMillis);
 
+    final author = entity.author;
+    final coverPath = entity.coverPath;
+
     return Book(
       id: entity.domainId,
       title: entity.title,
-      author: entity.author.isEmpty ? null : entity.author,
+      author: (author == null || author.isEmpty) ? null : author,
       filePath: entity.filePath,
       fileType: entity.fileType,
-      coverPath: entity.coverPath.isEmpty ? null : entity.coverPath,
+      coverPath: (coverPath == null || coverPath.isEmpty) ? null : coverPath,
       createdAt: entity.createdAt,
       lastOpenedAt: lastOpenedAt,
     );

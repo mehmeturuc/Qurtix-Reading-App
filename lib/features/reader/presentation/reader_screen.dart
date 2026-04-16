@@ -74,6 +74,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Timer? _readingPositionSaveTimer;
   Timer? _focusedAnnotationTimer;
   Timer? _annotationFeedbackTimer;
+  int _annotationHydrationGeneration = 0;
 
   @override
   void initState() {
@@ -82,6 +83,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _scrollController.addListener(_updateReadingProgress);
     _updateReadingProgressAfterLayout();
     if (_usesTextReader) _scheduleInitialAnnotationJump();
+    _scheduleAnnotationHydration();
   }
 
   @override
@@ -93,6 +95,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _didHandleInitialAnnotation = false;
       _initialAnnotationAttempts = 0;
       if (_usesTextReader) _scheduleInitialAnnotationJump();
+    }
+    if (oldWidget.annotationRepository != widget.annotationRepository ||
+        oldWidget.book.id != widget.book.id) {
+      _scheduleAnnotationHydration();
     }
   }
 
@@ -393,9 +399,43 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   ReaderAnnotation? _resolveOpeningTarget() {
     final initial = widget.initialAnnotation;
-    if (initial != null && _annotationById(initial.id) != null) return initial;
+    if (initial != null && initial.bookId == widget.book.id) return initial;
 
     return _readingPositionAnnotation();
+  }
+
+  void _scheduleAnnotationHydration() {
+    if (widget.annotationRepository.isLoaded) return;
+
+    final generation = ++_annotationHydrationGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _annotationHydrationGeneration) return;
+      unawaited(_hydrateAnnotationsAfterOpen(generation));
+    });
+  }
+
+  Future<void> _hydrateAnnotationsAfterOpen(int generation) async {
+    await Future<void>.delayed(Duration.zero);
+    try {
+      await widget.annotationRepository.ensureLoaded();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || generation != _annotationHydrationGeneration) return;
+
+    final target = _resolveOpeningTarget();
+    if (_sameOpeningTarget(_openingTarget, target)) return;
+
+    setState(() {
+      _openingTarget = target;
+      _didHandleInitialAnnotation = false;
+      _initialAnnotationAttempts = 0;
+    });
+    _scheduleInitialAnnotationJump();
+  }
+
+  bool _sameOpeningTarget(ReaderAnnotation? a, ReaderAnnotation? b) {
+    return a?.id == b?.id && a?.locationRef == b?.locationRef;
   }
 
   ReaderAnnotation? _bookmarkAnnotation() {

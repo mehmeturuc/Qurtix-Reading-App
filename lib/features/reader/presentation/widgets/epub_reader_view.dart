@@ -21,7 +21,6 @@ class EpubReaderView extends StatefulWidget {
     required this.onSelectionChanged,
     this.controller,
     this.initialAnnotation,
-    this.onProgressChanged,
     this.onPositionChanged,
     super.key,
   });
@@ -36,7 +35,6 @@ class EpubReaderView extends StatefulWidget {
   final ValueChanged<ReaderSelection?> onSelectionChanged;
   final EpubReaderController? controller;
   final ReaderAnnotation? initialAnnotation;
-  final ValueChanged<double>? onProgressChanged;
   final ValueChanged<EpubReaderPosition>? onPositionChanged;
 
   @override
@@ -50,10 +48,6 @@ class EpubReaderController {
     return _state?._jumpToProgress(progress) ?? false;
   }
 
-  bool jumpToPage(int pageNumber) {
-    return false;
-  }
-
   bool jumpToAnnotation(ReaderAnnotation annotation) {
     return _state?._jumpToAnnotation(annotation) ?? false;
   }
@@ -65,14 +59,10 @@ class EpubReaderPosition {
   const EpubReaderPosition({
     required this.progress,
     required this.locationRef,
-    required this.currentPage,
-    required this.totalPages,
   });
 
   final double progress;
   final String locationRef;
-  final int currentPage;
-  final int totalPages;
 
   int get percent {
     final progressPercent = progress.clamp(0.0, 1.0) * 100;
@@ -134,6 +124,8 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   _EpubSourceModel? _loadedDocument;
   EpubSourceRange? _activeSourceRange;
   EpubSourceRange? _pendingRestoreRange;
+  Map<String, EpubSourceRange> _resolvedAnnotationRanges = const {};
+  String _resolvedAnnotationCacheKey = '';
   String? _handledInitialAnnotationId;
   int _initialAnnotationAttempts = 0;
   int? _lastNotifiedSourceOffset;
@@ -160,18 +152,17 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       _loadedDocument = null;
       _activeSourceRange = null;
       _pendingRestoreRange = null;
+      _resolvedAnnotationRanges = const {};
+      _resolvedAnnotationCacheKey = '';
       _handledInitialAnnotationId = null;
       _initialAnnotationAttempts = 0;
       _lastNotifiedSourceOffset = null;
       _chapterKeys.clear();
       if (_scrollController.hasClients) _scrollController.jumpTo(0);
-      widget.onProgressChanged?.call(0);
       widget.onPositionChanged?.call(
         const EpubReaderPosition(
           progress: 0,
           locationRef: 'epub:sourceOffset=0;sourceLength=0;progress=0.0000',
-          currentPage: 1,
-          totalPages: 1,
         ),
       );
     } else if (_typographyChanged(oldWidget)) {
@@ -220,11 +211,13 @@ class _EpubReaderViewState extends State<EpubReaderView> {
           _initialAnnotationAttempts = 0;
           _lastNotifiedSourceOffset = null;
           _ensureChapterKeys(document);
+          _refreshAnnotationRangeCache(document);
           _schedulePositionUpdate();
           _scheduleInitialAnnotationJump();
         }
 
         _ensureChapterKeys(document);
+        _refreshAnnotationRangeCache(document);
         _schedulePendingRestore();
 
         return Scrollbar(
@@ -298,13 +291,10 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     if (widget.annotations.isEmpty) return const [];
 
     final annotations = <ReaderAnnotation>[];
-    final document = _loadedDocument;
-    if (document == null) return annotations;
-
     for (final annotation in widget.annotations) {
       if (!annotation.canHighlightText) continue;
 
-      final range = _resolveAnnotationRange(annotation, document);
+      final range = _resolvedAnnotationRanges[annotation.id];
       if (range == null || range.sourceIndex != source.index) continue;
       if (range.localEnd > 0 && range.localStart < source.text.length) {
         annotations.add(annotation);
@@ -318,7 +308,7 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     ReaderAnnotation annotation,
     _EpubChapterSource source,
   ) {
-    final range = _resolveAnnotationRange(annotation, _loadedDocument);
+    final range = _resolvedAnnotationRanges[annotation.id];
     if (range == null || range.sourceIndex != source.index) return null;
     return range.localStart.clamp(0, source.text.length).toInt();
   }
@@ -327,9 +317,30 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     ReaderAnnotation annotation,
     _EpubChapterSource source,
   ) {
-    final range = _resolveAnnotationRange(annotation, _loadedDocument);
+    final range = _resolvedAnnotationRanges[annotation.id];
     if (range == null || range.sourceIndex != source.index) return null;
     return range.localEnd.clamp(range.localStart, source.text.length).toInt();
+  }
+
+  void _refreshAnnotationRangeCache(_EpubSourceModel document) {
+    final cacheKey = [
+      identityHashCode(document),
+      widget.annotations.length,
+      for (final annotation in widget.annotations)
+        '${annotation.id}:${annotation.locationRef}:${annotation.updatedAt.microsecondsSinceEpoch}',
+    ].join('|');
+    if (cacheKey == _resolvedAnnotationCacheKey) return;
+
+    final ranges = <String, EpubSourceRange>{};
+    for (final annotation in widget.annotations) {
+      if (!annotation.canHighlightText) continue;
+
+      final range = _resolveAnnotationRange(annotation, document);
+      if (range != null) ranges[annotation.id] = range;
+    }
+
+    _resolvedAnnotationRanges = ranges;
+    _resolvedAnnotationCacheKey = cacheKey;
   }
 
   void _handleSelectionChanged(
@@ -738,13 +749,10 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       anchorText: _anchorTextAt(range),
     );
 
-    widget.onProgressChanged?.call(progress);
     widget.onPositionChanged?.call(
       EpubReaderPosition(
         progress: progress,
         locationRef: locationRef,
-        currentPage: range.sourceIndex + 1,
-        totalPages: _loadedDocument?.sources.length ?? 1,
       ),
     );
   }
@@ -1088,7 +1096,7 @@ class _EpubSourceModel {
     return null;
   }
 
-  _EpubSourceLocation? sourceLocationForProgress(double progress) {
+  _ResolvedEpubSourceLocation? sourceLocationForProgress(double progress) {
     if (isEmpty || progress.isNaN) return null;
 
     final clamped = progress.isFinite
@@ -1102,7 +1110,7 @@ class _EpubSourceModel {
     return sourceLocationForOffset(sourceOffset);
   }
 
-  _EpubSourceLocation? sourceLocationForOffset(int sourceOffset) {
+  _ResolvedEpubSourceLocation? sourceLocationForOffset(int sourceOffset) {
     if (isEmpty) return null;
 
     final safeOffset = sourceOffset.clamp(0, textLength).toInt();
@@ -1112,9 +1120,9 @@ class _EpubSourceModel {
       final source = sources[index];
       if (safeOffset < source.bookStartOffset) {
         if (previousSource == null) {
-          return _EpubSourceLocation(source: source, localOffset: 0);
+          return _ResolvedEpubSourceLocation(source: source, localOffset: 0);
         }
-        return _EpubSourceLocation(
+        return _ResolvedEpubSourceLocation(
           source: previousSource,
           localOffset: previousSource.text.length,
         );
@@ -1123,7 +1131,7 @@ class _EpubSourceModel {
       final sourceEndOffset = source.bookStartOffset + source.text.length;
       final isLastSource = index == sources.length - 1;
       if (safeOffset < sourceEndOffset || (isLastSource && safeOffset <= sourceEndOffset)) {
-        return _EpubSourceLocation(
+        return _ResolvedEpubSourceLocation(
           source: source,
           localOffset: (safeOffset - source.bookStartOffset)
               .clamp(0, source.text.length)
@@ -1135,7 +1143,7 @@ class _EpubSourceModel {
     }
 
     final last = sources.last;
-    return _EpubSourceLocation(source: last, localOffset: last.text.length);
+    return _ResolvedEpubSourceLocation(source: last, localOffset: last.text.length);
   }
 
   double progressForSourceLocation({
@@ -1187,8 +1195,8 @@ class _EpubChapterSource {
   final int bookStartOffset;
 }
 
-class _EpubSourceLocation {
-  const _EpubSourceLocation({
+class _ResolvedEpubSourceLocation {
+  const _ResolvedEpubSourceLocation({
     required this.source,
     required this.localOffset,
   });

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 
@@ -24,6 +26,7 @@ class _QurtixAppState extends State<QurtixApp> {
   @override
   void dispose() {
     _annotationRepository.dispose();
+    unawaited(widget.isar.close());
     super.dispose();
   }
 

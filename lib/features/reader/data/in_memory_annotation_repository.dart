@@ -12,9 +12,15 @@ class InMemoryAnnotationRepository implements AnnotationRepository {
   final ValueNotifier<List<ReaderAnnotation>> _annotations;
 
   @override
+  bool get isLoaded => true;
+
+  @override
   ValueListenable<List<ReaderAnnotation>> watchAnnotations() {
     return _annotations;
   }
+
+  @override
+  Future<void> ensureLoaded() async {}
 
   @override
   List<ReaderAnnotation> getAnnotations() {
