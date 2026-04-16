@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../shared/design/app_design.dart';
 import '../../domain/annotation_color.dart';
+import '../annotation_display_text.dart';
 
 class AnnotationDraft {
   const AnnotationDraft({
@@ -69,6 +70,7 @@ class _AddNoteSheetState extends State<AddNoteSheet> {
     final maxSheetHeight = (availableHeight * 0.86)
         .clamp(180.0, 640.0)
         .toDouble();
+    final previewText = pdfAnnotationTextForDisplay(widget.selectedText);
 
     return SafeArea(
       top: false,
@@ -122,13 +124,13 @@ class _AddNoteSheetState extends State<AddNoteSheet> {
                   child: Padding(
                     padding: const EdgeInsets.all(AppSpacing.x3),
                     child: Text(
-                      widget.selectedText,
-                      maxLines: 3,
+                      previewText,
+                      maxLines: 4,
                       overflow: TextOverflow.ellipsis,
-                      textDirection: _textDirectionFor(widget.selectedText),
+                      textDirection: annotationTextDirection(previewText),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: colors.onSurfaceVariant,
-                        height: 1.35,
+                        height: 1.42,
                       ),
                     ),
                   ),
@@ -288,11 +290,6 @@ class _AddNoteSheetState extends State<AddNoteSheet> {
     Navigator.of(context).pop();
   }
 
-  TextDirection? _textDirectionFor(String value) {
-    if (RegExp(r'[\u0590-\u08ff]').hasMatch(value)) return TextDirection.rtl;
-
-    return null;
-  }
 }
 
 class _ColorChoice extends StatelessWidget {

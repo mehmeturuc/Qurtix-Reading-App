@@ -7,6 +7,7 @@ import '../../library/domain/book_repository.dart';
 import '../../reader/domain/annotation_color.dart';
 import '../../reader/domain/annotation_repository.dart';
 import '../../reader/domain/reader_annotation.dart';
+import '../../reader/presentation/annotation_display_text.dart';
 import '../../reader/presentation/reader_screen.dart';
 import '../application/annotation_export_service.dart';
 
@@ -418,6 +419,8 @@ class _NoteCard extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final markerColor = annotationColorById(annotation.colorId);
+    final selectedText = annotationSelectedTextForDisplay(annotation);
+    final noteText = plainAnnotationTextForDisplay(annotation.noteText);
 
     return Material(
       color: Colors.transparent,
@@ -432,87 +435,99 @@ class _NoteCard extends StatelessWidget {
             border: Border.all(color: AppBorders.subtle(colors).color),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.x4),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.x4,
+              AppSpacing.x4,
+              AppSpacing.x3,
+              AppSpacing.x4,
+            ),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: markerColor,
-                    borderRadius: AppCorners.sm,
-                  ),
-                  child: const SizedBox(width: 10, height: 54),
-                ),
-                const SizedBox(width: AppSpacing.x3),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: markerColor,
+                        borderRadius: AppCorners.sm,
+                      ),
+                      child: const SizedBox(width: 8, height: 34),
+                    ),
+                    const SizedBox(width: AppSpacing.x3),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              annotation.displayTypeLabel,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w800,
+                          Wrap(
+                            spacing: AppSpacing.x2,
+                            runSpacing: AppSpacing.x1,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                annotation.displayTypeLabel,
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.1,
+                                ),
                               ),
-                            ),
+                              if (annotation.isFavorite)
+                                Icon(
+                                  Icons.star_rounded,
+                                  size: 17,
+                                  color: colors.primary,
+                                ),
+                            ],
                           ),
-                          if (annotation.isFavorite)
-                            Icon(
-                              Icons.star_rounded,
-                              size: 18,
-                              color: colors.primary,
+                          const SizedBox(height: AppSpacing.x1),
+                          Text(
+                            bookTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                              height: 1.2,
                             ),
-                          IconButton(
-                            onPressed: onDelete,
-                            icon: const Icon(Icons.delete_outline_rounded),
-                            tooltip:
-                                'Delete ${annotation.displayTypeLabel.toLowerCase()}',
                           ),
                         ],
                       ),
-                      const SizedBox(height: AppSpacing.x1),
-                      Text(
-                        bookTitle,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.x3),
-                      Text(
-                        annotation.selectedText,
-                        textDirection: _textDirectionFor(annotation.selectedText),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          height: 1.35,
-                        ),
-                      ),
-                      if (annotation.noteText.isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.x3),
-                        Text(
-                          annotation.noteText,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
+                    IconButton(
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      tooltip:
+                          'Delete ${annotation.displayTypeLabel.toLowerCase()}',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.x3),
+                Text(
+                  selectedText,
+                  textDirection: annotationTextDirection(selectedText),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    height: 1.45,
+                    color: colors.onSurface,
                   ),
                 ),
+                if (noteText.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.x3),
+                  Text(
+                    noteText,
+                    textDirection: annotationTextDirection(noteText),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
-  }
-
-  TextDirection? _textDirectionFor(String value) {
-    if (RegExp(r'[\u0590-\u08ff]').hasMatch(value)) return TextDirection.rtl;
-
-    return null;
   }
 }
 

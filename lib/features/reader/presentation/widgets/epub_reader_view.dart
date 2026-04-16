@@ -51,7 +51,7 @@ class EpubReaderController {
   }
 
   bool jumpToPage(int pageNumber) {
-    return _state?._jumpToPageNumber(pageNumber) ?? false;
+    return false;
   }
 
   bool jumpToAnnotation(ReaderAnnotation annotation) {
@@ -75,210 +75,74 @@ class EpubReaderPosition {
   final int totalPages;
 
   int get percent {
-    if (totalPages <= 0) return 0;
-    final progressPercent = (currentPage / totalPages) * 100;
+    final progressPercent = progress.clamp(0.0, 1.0) * 100;
     return progressPercent.clamp(0, 100).floor();
   }
 
   String get label => 'Progress $percent%';
 }
 
-class EpubPaginationLayout {
-  const EpubPaginationLayout({
-    required this.viewportWidth,
-    required this.viewportHeight,
-    required this.fontSize,
-    required this.lineHeight,
-    required this.maxWidth,
-    required this.horizontalPadding,
-    required this.verticalPadding,
-  });
-
-  final double viewportWidth;
-  final double viewportHeight;
-  final double fontSize;
-  final double lineHeight;
-  final double maxWidth;
-  final double horizontalPadding;
-  final double verticalPadding;
-
-  double get textWidth {
-    return (viewportWidth - (horizontalPadding * 2))
-        .clamp(0.0, maxWidth)
-        .toDouble();
-  }
-
-  double get pageTextHeight => math.max(1, viewportHeight - verticalPadding);
-
-  String get cacheKey {
-    return [
-      viewportWidth.toStringAsFixed(1),
-      viewportHeight.toStringAsFixed(1),
-      fontSize.toStringAsFixed(2),
-      lineHeight.toStringAsFixed(2),
-      maxWidth.toStringAsFixed(1),
-      horizontalPadding.toStringAsFixed(1),
-      verticalPadding.toStringAsFixed(1),
-    ].join('|');
-  }
-}
-
-class EpubPageAnchor {
-  const EpubPageAnchor({
+class EpubSourceLocation {
+  const EpubSourceLocation({
     required this.chapterPath,
-    required this.localStart,
-    required this.localEnd,
-    required this.virtualPageNumber,
     required this.sourceIndex,
+    required this.localOffset,
+    required this.globalOffset,
   });
 
   final String chapterPath;
-  final int localStart;
-  final int localEnd;
-  final int virtualPageNumber;
   final int sourceIndex;
+  final int localOffset;
+  final int globalOffset;
 }
 
-class EpubVirtualPage {
-  const EpubVirtualPage({
-    required this.pageNumber,
-    required this.chapterPath,
-    required this.sourceIndex,
-    required this.localStart,
-    required this.localEnd,
-    required this.text,
+class EpubSourceRange {
+  const EpubSourceRange({
+    required this.start,
+    required this.end,
   });
 
-  final int pageNumber;
-  final String chapterPath;
-  final int sourceIndex;
-  final int localStart;
-  final int localEnd;
-  final String text;
+  final EpubSourceLocation start;
+  final EpubSourceLocation end;
 
-  bool containsLocalOffset(int offset) => offset >= localStart && offset <= localEnd;
-
-  int renderedToSourceOffset(int renderedOffset) {
-    final safeRendered = renderedOffset.clamp(0, text.length).toInt();
-    return (localStart + safeRendered).clamp(localStart, localEnd).toInt();
-  }
-
-  int? sourceToRenderedOffset(int sourceOffset) {
-    if (sourceOffset < localStart || sourceOffset > localEnd) return null;
-    return (sourceOffset - localStart).clamp(0, text.length).toInt();
-  }
-
-  EpubPageAnchor anchorAt({required int localStart, required int localEnd}) {
-    return EpubPageAnchor(
-      chapterPath: chapterPath,
-      localStart: localStart.clamp(this.localStart, this.localEnd).toInt(),
-      localEnd: localEnd.clamp(this.localStart, this.localEnd).toInt(),
-      virtualPageNumber: pageNumber,
-      sourceIndex: sourceIndex,
-    );
-  }
-}
-
-class EpubPageMap {
-  const EpubPageMap({required this.pages, required this.layout});
-
-  final List<EpubVirtualPage> pages;
-  final EpubPaginationLayout layout;
-
-  int get totalPages => pages.length;
-  bool get isEmpty => pages.isEmpty;
-
-  EpubVirtualPage? pageAtIndex(int index) {
-    if (index < 0 || index >= pages.length) return null;
-    return pages[index];
-  }
-
-  EpubVirtualPage? pageNumber(int pageNumber) {
-    if (pageNumber <= 0 || pageNumber > pages.length) return null;
-    return pages[pageNumber - 1];
-  }
-
-  EpubVirtualPage? pageForAnchor(EpubPageAnchor anchor) {
-    return pageForLocation(
-      chapterPath: anchor.chapterPath,
-      localOffset: anchor.localStart,
-      preferredPageNumber: anchor.virtualPageNumber,
-    );
-  }
-
-  EpubVirtualPage? pageForLocation({
-    required String chapterPath,
-    required int localOffset,
-    int? preferredPageNumber,
-  }) {
-    final preferred = preferredPageNumber == null ? null : pageNumber(preferredPageNumber);
-    if (preferred != null &&
-        preferred.chapterPath == chapterPath &&
-        preferred.containsLocalOffset(localOffset)) {
-      return preferred;
-    }
-
-    for (final page in pages) {
-      if (page.chapterPath == chapterPath && page.containsLocalOffset(localOffset)) {
-        return page;
-      }
-    }
-
-    return nearestPageInChapter(chapterPath: chapterPath, localOffset: localOffset);
-  }
-
-  EpubVirtualPage? nearestPageInChapter({
-    required String chapterPath,
-    required int localOffset,
-  }) {
-    EpubVirtualPage? nearest;
-    var nearestDistance = 1 << 30;
-    for (final page in pages) {
-      if (page.chapterPath != chapterPath) continue;
-      final distance = localOffset < page.localStart
-          ? page.localStart - localOffset
-          : localOffset > page.localEnd
-              ? localOffset - page.localEnd
-              : 0;
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearest = page;
-      }
-    }
-    return nearest;
-  }
-
-  EpubVirtualPage? pageForProgress(double progress) {
-    if (pages.isEmpty) return null;
-    final clamped = progress.clamp(0.0, 1.0).toDouble();
-    final index = math.max(0, (clamped * pages.length).ceil() - 1);
-    return pageAtIndex(index);
-  }
+  String get chapterPath => start.chapterPath;
+  int get sourceIndex => start.sourceIndex;
+  int get localStart => start.localOffset;
+  int get localEnd => end.localOffset;
+  int get globalStartOffset => start.globalOffset;
+  int get globalEndOffset => end.globalOffset;
 }
 
 class _EpubReaderViewState extends State<EpubReaderView> {
   static const _horizontalPadding = 24.0;
-  static const _verticalPadding = 100.0;
+  static const _topPadding = 40.0;
+  static const _bottomPadding = 96.0;
+  static const _chapterSpacing = 32.0;
+  static const _visibleProbeInset = 72.0;
   static const _anchorContextLength = 48;
   static const _anchorTextLength = 80;
   static const _sameChapterSearchRadius = 5000;
+  static const _contextExactScore = 8;
+  static const _contextSoftScore = 3;
+  static const _contextWeakScore = 1;
   static const _maxInitialAnnotationAttempts = 3;
 
-  final Map<String, EpubPageMap> _pageMapCache = {};
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _chapterKeys = {};
 
-  late Future<_EpubDocument> _document;
-  PageController? _pageController;
-  _EpubDocument? _loadedDocument;
-  EpubPageMap? _pageMap;
-  String? _pageMapKey;
+  late Future<_EpubSourceModel> _document;
+  _EpubSourceModel? _loadedDocument;
+  EpubSourceRange? _activeSourceRange;
+  EpubSourceRange? _pendingRestoreRange;
   String? _handledInitialAnnotationId;
   int _initialAnnotationAttempts = 0;
-  int _currentPageIndex = 0;
+  int? _lastNotifiedSourceOffset;
 
   @override
   void initState() {
     super.initState();
     widget.controller?._state = this;
+    _scrollController.addListener(_notifyPositionChanged);
     _document = _loadDocument();
   }
 
@@ -294,24 +158,28 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     if (oldWidget.filePath != widget.filePath) {
       _document = _loadDocument();
       _loadedDocument = null;
-      _pageMap = null;
-      _pageMapKey = null;
+      _activeSourceRange = null;
+      _pendingRestoreRange = null;
       _handledInitialAnnotationId = null;
       _initialAnnotationAttempts = 0;
-      _currentPageIndex = 0;
-      _pageController?.dispose();
-      _pageController = null;
-      _pageMapCache.clear();
+      _lastNotifiedSourceOffset = null;
+      _chapterKeys.clear();
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
       widget.onProgressChanged?.call(0);
       widget.onPositionChanged?.call(
         const EpubReaderPosition(
           progress: 0,
-          locationRef: 'epub:page=1;totalPages=0;progress=0.0000',
+          locationRef: 'epub:sourceOffset=0;sourceLength=0;progress=0.0000',
           currentPage: 1,
-          totalPages: 0,
+          totalPages: 1,
         ),
       );
-    } else if (oldWidget.initialAnnotation?.id != widget.initialAnnotation?.id) {
+    } else if (_typographyChanged(oldWidget)) {
+      _pendingRestoreRange = _currentVisibleSourceRange();
+      _schedulePendingRestore();
+    }
+
+    if (oldWidget.initialAnnotation?.id != widget.initialAnnotation?.id) {
       _handledInitialAnnotationId = null;
       _initialAnnotationAttempts = 0;
       _scheduleInitialAnnotationJump();
@@ -321,13 +189,15 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   @override
   void dispose() {
     widget.controller?._state = null;
-    _pageController?.dispose();
+    _scrollController
+      ..removeListener(_notifyPositionChanged)
+      ..dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_EpubDocument>(
+    return FutureBuilder<_EpubSourceModel>(
       future: _document,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -342,284 +212,156 @@ class _EpubReaderViewState extends State<EpubReaderView> {
           );
         }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final layout = EpubPaginationLayout(
-              viewportWidth: constraints.maxWidth.isFinite
-                  ? constraints.maxWidth
-                  : MediaQuery.sizeOf(context).width,
-              viewportHeight: constraints.maxHeight.isFinite
-                  ? constraints.maxHeight
-                  : MediaQuery.sizeOf(context).height,
-              fontSize: widget.fontSize,
-              lineHeight: widget.lineHeight,
-              maxWidth: widget.maxWidth,
-              horizontalPadding: _horizontalPadding,
-              verticalPadding: _verticalPadding,
-            );
-            final pageMap = _pageMapFor(document, layout);
+        if (!identical(_loadedDocument, document)) {
+          _loadedDocument = document;
+          _activeSourceRange = document.rangeAtStart;
+          _pendingRestoreRange = null;
+          _handledInitialAnnotationId = null;
+          _initialAnnotationAttempts = 0;
+          _lastNotifiedSourceOffset = null;
+          _ensureChapterKeys(document);
+          _schedulePositionUpdate();
+          _scheduleInitialAnnotationJump();
+        }
 
-            if (!identical(_loadedDocument, document)) {
-              _loadedDocument = document;
-              _handledInitialAnnotationId = null;
-              _initialAnnotationAttempts = 0;
-              _currentPageIndex = 0;
-            }
+        _ensureChapterKeys(document);
+        _schedulePendingRestore();
 
-            if (_pageMapKey != layout.cacheKey) {
-              final anchor = _currentPageAnchor();
-              _pageMap = pageMap;
-              _pageMapKey = layout.cacheKey;
-              _currentPageIndex = _indexForAnchorAfterRepagination(pageMap, anchor);
-              _resetPageController(_currentPageIndex);
-              _schedulePositionUpdate();
-              _scheduleInitialAnnotationJump();
-            } else {
-              _pageMap = pageMap;
-              _ensurePageController();
-            }
-
-            if (pageMap.isEmpty) {
-              return const _DocumentError(
-                message: 'This EPUB file does not contain readable text.',
-              );
-            }
-
-            return PageView.builder(
-              controller: _pageController,
-              itemCount: pageMap.totalPages,
-              onPageChanged: (index) {
-                _currentPageIndex = index;
-                _notifyPositionChanged();
-              },
-              itemBuilder: (context, index) {
-                final page = pageMap.pages[index];
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(
-                    _horizontalPadding,
-                    24,
-                    _horizontalPadding,
-                    76,
+        return Scrollbar(
+          controller: _scrollController,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              children: [
+                for (final source in document.sources)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      _horizontalPadding,
+                      source.index == 0 ? _topPadding : _chapterSpacing,
+                      _horizontalPadding,
+                      source.index == document.sources.length - 1 ? _bottomPadding : 0,
+                    ),
+                    child: Align(
+                      key: _chapterKeys[source.index],
+                      alignment: Alignment.topCenter,
+                      child: ReaderContent(
+                        text: source.text,
+                        annotations: _annotationsForSource(source),
+                        textColor: widget.textColor,
+                        fontSize: widget.fontSize,
+                        lineHeight: widget.lineHeight,
+                        maxWidth: widget.maxWidth,
+                        textScaler: MediaQuery.textScalerOf(context),
+                        focusedAnnotationId: widget.focusedAnnotationId,
+                        annotationStartOffset: (annotation) {
+                          return _annotationLocalStartForSource(annotation, source);
+                        },
+                        annotationEndOffset: (annotation) {
+                          return _annotationLocalEndForSource(annotation, source);
+                        },
+                        onSelectionChanged: (selection) {
+                          _handleSelectionChanged(source, selection);
+                        },
+                      ),
+                    ),
                   ),
-                  child: ReaderContent(
-                    text: page.text,
-                    annotations: _annotationsForPage(page),
-                    textColor: widget.textColor,
-                    fontSize: widget.fontSize,
-                    lineHeight: widget.lineHeight,
-                    maxWidth: widget.maxWidth,
-                    focusedAnnotationId: widget.focusedAnnotationId,
-                    annotationStartOffset: (annotation) {
-                      return _annotationLocalStartForPage(annotation, page);
-                    },
-                    annotationEndOffset: (annotation) {
-                      return _annotationLocalEndForPage(annotation, page);
-                    },
-                    locationOffsetToRenderedOffset: page.sourceToRenderedOffset,
-                    renderedOffsetToLocationOffset: page.renderedToSourceOffset,
-                    onSelectionChanged: (selection) {
-                      _handleSelectionChanged(page, selection);
-                    },
-                  ),
-                );
-              },
-            );
-          },
+              ],
+            ),
+          ),
         );
       },
     );
   }
 
-  Future<_EpubDocument> _loadDocument() async {
+  bool _typographyChanged(EpubReaderView oldWidget) {
+    return oldWidget.fontSize != widget.fontSize ||
+        oldWidget.lineHeight != widget.lineHeight ||
+        oldWidget.maxWidth != widget.maxWidth;
+  }
+
+  Future<_EpubSourceModel> _loadDocument() async {
     final file = File(widget.filePath);
     if (!await file.exists()) throw StateError('File not found');
     final bytes = await file.readAsBytes();
-    if (bytes.isEmpty) return const _EpubDocument(sources: []);
+    if (bytes.isEmpty) return const _EpubSourceModel(sources: []);
     return compute(_extractEpubDocumentFromBytes, bytes);
   }
 
-  EpubPageMap _pageMapFor(_EpubDocument document, EpubPaginationLayout layout) {
-    final cacheKey = '${document.cacheSeed}:${layout.cacheKey}';
-    final cached = _pageMapCache[cacheKey];
-    if (cached != null) return cached;
-
-    final pageMap = _buildPageMap(document, layout);
-    _pageMapCache[cacheKey] = pageMap;
-    if (_pageMapCache.length > 4) _pageMapCache.remove(_pageMapCache.keys.first);
-    return pageMap;
-  }
-
-  EpubPageMap _buildPageMap(_EpubDocument document, EpubPaginationLayout layout) {
-    final pages = <EpubVirtualPage>[];
-    var pageNumber = 1;
+  void _ensureChapterKeys(_EpubSourceModel document) {
     for (final source in document.sources) {
-      final sourcePages = _paginateSource(
-        source: source,
-        layout: layout,
-        firstPageNumber: pageNumber,
-      );
-      pages.addAll(sourcePages);
-      pageNumber += sourcePages.length;
+      _chapterKeys.putIfAbsent(source.index, GlobalKey.new);
     }
-    return EpubPageMap(
-      pages: List<EpubVirtualPage>.unmodifiable(pages),
-      layout: layout,
-    );
   }
 
-  List<EpubVirtualPage> _paginateSource({
-    required _EpubChapterSource source,
-    required EpubPaginationLayout layout,
-    required int firstPageNumber,
-  }) {
-    final text = source.text;
-    if (text.isEmpty) return const [];
-    if (layout.textWidth <= 0) {
-      return [_pageFromRange(source, firstPageNumber, 0, text.length)];
-    }
-
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: layout.fontSize,
-          height: layout.lineHeight,
-          letterSpacing: 0,
-        ),
-      ),
-      textAlign: TextAlign.start,
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: layout.textWidth);
-
-    final lines = painter.computeLineMetrics();
-    if (lines.isEmpty) return [_pageFromRange(source, firstPageNumber, 0, text.length)];
-
-    final pages = <EpubVirtualPage>[];
-    var pageTop = lines.first.baseline - lines.first.ascent;
-    var pageStart = 0;
-    var pageNumber = firstPageNumber;
-
-    for (var i = 1; i < lines.length; i++) {
-      final line = lines[i];
-      final lineBottom = line.baseline + line.descent;
-      if (lineBottom - pageTop <= layout.pageTextHeight) continue;
-
-      final lineStart = painter
-          .getPositionForOffset(Offset(0, line.baseline))
-          .offset
-          .clamp(pageStart, text.length)
-          .toInt();
-      final pageEnd = _pageBreakBefore(text, lineStart, pageStart);
-      if (pageEnd > pageStart) {
-        pages.add(_pageFromRange(source, pageNumber, pageStart, pageEnd));
-        pageNumber++;
-      }
-      pageStart = _skipLeadingWhitespace(text, pageEnd);
-      pageTop = line.baseline - line.ascent;
-    }
-
-    if (pageStart < text.length || pages.isEmpty) {
-      pages.add(_pageFromRange(source, pageNumber, pageStart, text.length));
-    }
-    return pages;
-  }
-
-  EpubVirtualPage _pageFromRange(
-    _EpubChapterSource source,
-    int pageNumber,
-    int start,
-    int end,
-  ) {
-    final safeStart = start.clamp(0, source.text.length).toInt();
-    final safeEnd = end.clamp(safeStart, source.text.length).toInt();
-    return EpubVirtualPage(
-      pageNumber: pageNumber,
-      chapterPath: source.path,
-      sourceIndex: source.index,
-      localStart: safeStart,
-      localEnd: safeEnd,
-      text: source.text.substring(safeStart, safeEnd),
-    );
-  }
-
-  int _pageBreakBefore(String text, int proposedEnd, int pageStart) {
-    final safeEnd = proposedEnd.clamp(pageStart, text.length).toInt();
-    if (safeEnd >= text.length) return text.length;
-
-    final paragraphBreak = text.lastIndexOf('\n', safeEnd);
-    if (paragraphBreak > pageStart + 120) return paragraphBreak + 1;
-
-    final sentenceBreak = text.lastIndexOf(RegExp(r'[.!?]\s'), safeEnd);
-    if (sentenceBreak > pageStart + 120) return sentenceBreak + 1;
-
-    final spaceBreak = text.lastIndexOf(RegExp(r'\s'), safeEnd);
-    if (spaceBreak > pageStart + 40) return spaceBreak + 1;
-
-    return safeEnd;
-  }
-
-  int _skipLeadingWhitespace(String text, int offset) {
-    var index = offset.clamp(0, text.length).toInt();
-    while (index < text.length && text.codeUnitAt(index) <= 32) {
-      index++;
-    }
-    return index;
-  }
-
-  void _ensurePageController() {
-    _pageController ??= PageController(initialPage: _currentPageIndex);
-  }
-
-  void _resetPageController(int initialPage) {
-    _pageController?.dispose();
-    _pageController = PageController(initialPage: initialPage);
-  }
-
-  EpubPageAnchor? _currentPageAnchor() {
-    final page = _pageMap?.pageAtIndex(_currentPageIndex);
-    if (page == null) return null;
-    return page.anchorAt(localStart: page.localStart, localEnd: page.localStart);
-  }
-
-  int _indexForAnchorAfterRepagination(EpubPageMap pageMap, EpubPageAnchor? anchor) {
-    if (pageMap.isEmpty) return 0;
-    if (anchor == null) return _currentPageIndex.clamp(0, pageMap.totalPages - 1);
-    final page = pageMap.pageForAnchor(anchor);
-    if (page == null) return _currentPageIndex.clamp(0, pageMap.totalPages - 1);
-    return page.pageNumber - 1;
-  }
-
-  List<ReaderAnnotation> _annotationsForPage(EpubVirtualPage page) {
+  List<ReaderAnnotation> _annotationsForSource(_EpubChapterSource source) {
     if (widget.annotations.isEmpty) return const [];
-    final ranges = <ReaderAnnotation>[];
+
+    final annotations = <ReaderAnnotation>[];
+    final document = _loadedDocument;
+    if (document == null) return annotations;
+
     for (final annotation in widget.annotations) {
       if (!annotation.canHighlightText) continue;
-      final start = _annotationLocalStartForPage(annotation, page);
-      final end = _annotationLocalEndForPage(annotation, page);
-      if (start == null || end == null) continue;
-      if (end > page.localStart && start < page.localEnd) ranges.add(annotation);
+
+      final range = _resolveAnnotationRange(annotation, document);
+      if (range == null || range.sourceIndex != source.index) continue;
+      if (range.localEnd > 0 && range.localStart < source.text.length) {
+        annotations.add(annotation);
+      }
     }
-    return ranges;
+
+    return annotations;
   }
 
-  int? _annotationLocalStartForPage(
+  int? _annotationLocalStartForSource(
     ReaderAnnotation annotation,
-    EpubVirtualPage page,
+    _EpubChapterSource source,
   ) {
-    if (annotation.epubChapterPath != page.chapterPath) return null;
-    final start = annotation.epubLocalStartIndex;
-    if (start == null) return null;
-    return start.clamp(page.localStart, page.localEnd).toInt();
+    final range = _resolveAnnotationRange(annotation, _loadedDocument);
+    if (range == null || range.sourceIndex != source.index) return null;
+    return range.localStart.clamp(0, source.text.length).toInt();
   }
 
-  int? _annotationLocalEndForPage(
+  int? _annotationLocalEndForSource(
     ReaderAnnotation annotation,
-    EpubVirtualPage page,
+    _EpubChapterSource source,
   ) {
-    if (annotation.epubChapterPath != page.chapterPath) return null;
-    final end = annotation.epubLocalEndIndex ?? annotation.epubLocalStartIndex;
-    if (end == null) return null;
-    return end.clamp(page.localStart, page.localEnd).toInt();
+    final range = _resolveAnnotationRange(annotation, _loadedDocument);
+    if (range == null || range.sourceIndex != source.index) return null;
+    return range.localEnd.clamp(range.localStart, source.text.length).toInt();
+  }
+
+  void _handleSelectionChanged(
+    _EpubChapterSource source,
+    ReaderSelection? selection,
+  ) {
+    if (selection == null) {
+      widget.onSelectionChanged(null);
+      return;
+    }
+
+    final range = _loadedDocument?.sourceRangeFor(
+      source: source,
+      localStart: selection.startIndex,
+      localEnd: selection.endIndex,
+    );
+    if (range == null) {
+      widget.onSelectionChanged(null);
+      return;
+    }
+
+    widget.onSelectionChanged(
+      ReaderSelection(
+        text: selection.text,
+        startIndex: range.localStart,
+        endIndex: range.localEnd,
+        locationRef: _locationRefForRange(
+          range: range,
+          anchorText: selection.text,
+        ),
+      ),
+    );
   }
 
   void _scheduleInitialAnnotationJump() {
@@ -630,12 +372,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     if (!mounted) return;
     final annotation = widget.initialAnnotation;
     final document = _loadedDocument;
-    final pageMap = _pageMap;
     if (annotation == null ||
         document == null ||
         document.isEmpty ||
-        pageMap == null ||
-        pageMap.isEmpty ||
         _handledInitialAnnotationId == annotation.id) {
       return;
     }
@@ -653,71 +392,194 @@ class _EpubReaderViewState extends State<EpubReaderView> {
 
   bool _jumpToAnnotation(ReaderAnnotation annotation) {
     final document = _loadedDocument;
-    final pageMap = _pageMap;
-    if (document == null || pageMap == null || document.isEmpty || pageMap.isEmpty) {
+    if (document == null || document.isEmpty) return false;
+
+    final range = _resolveAnnotationRange(annotation, document);
+    if (range == null) return false;
+
+    _activeSourceRange = range;
+    return _scrollToSourceLocation(range.start);
+  }
+
+  bool _jumpToProgress(double progress) {
+    final document = _loadedDocument;
+    if (document == null || document.isEmpty) return false;
+
+    final location = document.sourceLocationForProgress(progress);
+    if (location == null) return false;
+
+    final range = document.sourceRangeFor(
+      source: location.source,
+      localStart: location.localOffset,
+      localEnd: location.localOffset,
+    );
+    _activeSourceRange = range;
+    return _scrollToSourceLocation(range.start);
+  }
+
+  bool _scrollToSourceLocation(EpubSourceLocation location) {
+    final document = _loadedDocument;
+    if (document == null || !_scrollController.hasClients) return false;
+
+    final source = document.sourceAtIndex(location.sourceIndex);
+    final key = _chapterKeys[location.sourceIndex];
+    final targetContext = key?.currentContext;
+    if (source == null || targetContext == null) return false;
+
+    final box = targetContext.findRenderObject() as RenderBox?;
+    final scrollBox = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || scrollBox == null || !scrollBox.hasSize) {
       return false;
     }
 
-    final target = _resolveAnnotationPage(annotation, document, pageMap);
-    if (target == null) return false;
-    _jumpToPage(target);
+    final textWidth = math.min(box.size.width, widget.maxWidth);
+    if (textWidth <= 0) return false;
+
+    final localOffset = location.localOffset.clamp(0, source.text.length).toInt();
+    final textPainter = _textPainter(source.text, textWidth);
+    final caretOffset = textPainter.getOffsetForCaret(
+      TextPosition(offset: localOffset),
+      Rect.zero,
+    );
+    final chapterTop = box.localToGlobal(Offset.zero).dy -
+        scrollBox.localToGlobal(Offset.zero).dy +
+        _scrollController.offset;
+    final target = chapterTop + caretOffset.dy - _visibleProbeInset;
+    final safeTarget = target
+        .clamp(0.0, _scrollController.position.maxScrollExtent)
+        .toDouble();
+
+    _scrollController.animateTo(
+      safeTarget,
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutCubic,
+    );
+    _schedulePositionUpdate();
     return true;
   }
 
-  EpubVirtualPage? _resolveAnnotationPage(
+  EpubSourceRange? _resolveAnnotationRange(
     ReaderAnnotation annotation,
-    _EpubDocument document,
-    EpubPageMap pageMap,
+    _EpubSourceModel? document,
   ) {
-    final path = annotation.epubChapterPath;
-    final localStart = annotation.epubLocalStartIndex;
-    if (path != null && path.isNotEmpty && localStart != null) {
-      final source = document.sourceForPath(path);
-      if (source != null) {
-        final direct = pageMap.pageForLocation(
-          chapterPath: path,
-          localOffset: localStart,
-          preferredPageNumber: annotation.epubVirtualPageNumber,
-        );
-        if (direct != null && _pageMatchesAnchor(direct, annotation)) return direct;
+    if (document == null || document.isEmpty) return null;
 
-        final recoveredOffset = _recoverLocalOffsetFromContext(
-          source: source,
-          expectedLocalStart: localStart,
-          anchorText: _anchorTextFor(annotation),
-          prefixText: annotation.epubPrefixText ?? '',
-          suffixText: annotation.epubSuffixText ?? '',
+    final source = _sourceForAnnotation(document, annotation);
+    final localStart = annotation.epubLocalStartIndex;
+    if (source != null && localStart != null) {
+      final safeStart = localStart.clamp(0, source.text.length).toInt();
+      final safeEnd = (annotation.epubLocalEndIndex ?? safeStart)
+          .clamp(safeStart, source.text.length)
+          .toInt();
+      final direct = document.sourceRangeFor(
+        source: source,
+        localStart: safeStart,
+        localEnd: safeEnd,
+      );
+      final anchorText = _anchorTextFor(annotation);
+      final prefixText = annotation.epubPrefixText ?? '';
+      final suffixText = annotation.epubSuffixText ?? '';
+
+      if (_sourceMatchesAnchor(
+        source: source,
+        localIndex: safeStart,
+        anchorText: anchorText,
+        prefixText: prefixText,
+        suffixText: suffixText,
+      )) {
+        return direct;
+      }
+
+      final recoveredOffset = _recoverLocalOffsetFromContext(
+        source: source,
+        expectedLocalStart: localStart,
+        anchorText: anchorText,
+        prefixText: prefixText,
+        suffixText: suffixText,
+      );
+      if (recoveredOffset != null) {
+        final recoveredLength = math.max(
+          math.max(0, safeEnd - safeStart),
+          anchorText.length,
         );
-        if (recoveredOffset != null) {
-          return pageMap.pageForLocation(
-            chapterPath: path,
-            localOffset: recoveredOffset,
-          );
-        }
-        if (direct != null) return direct;
-        return pageMap.nearestPageInChapter(
-          chapterPath: path,
-          localOffset: localStart,
+        return document.sourceRangeFor(
+          source: source,
+          localStart: recoveredOffset.clamp(0, source.text.length).toInt(),
+          localEnd: (recoveredOffset + recoveredLength)
+              .clamp(recoveredOffset, source.text.length)
+              .toInt(),
         );
       }
+
+      return direct;
     }
 
-    final pageNumber = annotation.epubVirtualPageNumber;
-    final byPage = pageNumber == null ? null : pageMap.pageNumber(pageNumber);
-    if (byPage != null) return byPage;
+    final sourceOffset = annotation.epubSourceOffset;
+    if (sourceOffset != null) {
+      final location = document.sourceLocationForOffset(sourceOffset);
+      if (location == null) return null;
+
+      return document.sourceRangeFor(
+        source: location.source,
+        localStart: location.localOffset,
+        localEnd: location.localOffset,
+      );
+    }
 
     final progress = annotation.epubProgress;
-    return progress == null ? null : pageMap.pageForProgress(progress);
+    if (progress != null) {
+      final location = document.sourceLocationForProgress(progress);
+      if (location == null) return null;
+
+      return document.sourceRangeFor(
+        source: location.source,
+        localStart: location.localOffset,
+        localEnd: location.localOffset,
+      );
+    }
+
+    return null;
   }
 
-  bool _pageMatchesAnchor(EpubVirtualPage page, ReaderAnnotation annotation) {
-    final anchorText = _anchorTextFor(annotation);
+  _EpubChapterSource? _sourceForAnnotation(
+    _EpubSourceModel document,
+    ReaderAnnotation annotation,
+  ) {
+    final path = annotation.epubChapterPath;
+    if (path != null && path.isNotEmpty) {
+      final byPath = document.sourceForPath(path);
+      if (byPath != null) return byPath;
+    }
+
+    final chapterIndex = annotation.epubChapterIndex;
+    return chapterIndex == null ? null : document.sourceAtIndex(chapterIndex);
+  }
+
+  bool _sourceMatchesAnchor({
+    required _EpubChapterSource source,
+    required int localIndex,
+    required String anchorText,
+    required String prefixText,
+    required String suffixText,
+  }) {
     if (anchorText.isEmpty) return true;
-    final localStart = annotation.epubLocalStartIndex;
-    if (localStart == null || localStart < page.localStart) return false;
-    final renderedStart = localStart - page.localStart;
-    final renderedEnd = math.min(page.text.length, renderedStart + anchorText.length);
-    return page.text.substring(renderedStart, renderedEnd) == anchorText;
+    if (localIndex < 0 || localIndex >= source.text.length) return false;
+
+    final anchorEnd = math.min(source.text.length, localIndex + anchorText.length);
+    final actualAnchor = source.text.substring(localIndex, anchorEnd);
+    if (actualAnchor == anchorText) return true;
+    if (_normalizedAnchor(actualAnchor) != _normalizedAnchor(anchorText)) {
+      return false;
+    }
+    if (_normalizedAnchor(anchorText).length >= 12) return true;
+
+    return _anchorContextScore(
+          sourceText: source.text,
+          localIndex: localIndex,
+          anchorText: actualAnchor,
+          prefixText: prefixText,
+          suffixText: suffixText,
+        ) > 0;
   }
 
   int? _recoverLocalOffsetFromContext({
@@ -736,10 +598,29 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     );
     if (searchStart >= searchEnd) return null;
 
-    int? bestIndex;
-    var bestScore = -1;
+    final exactMatches = <int>[];
     var localIndex = source.text.indexOf(anchorText, searchStart);
     while (localIndex >= 0 && localIndex < searchEnd) {
+      exactMatches.add(localIndex);
+      localIndex = source.text.indexOf(
+        anchorText,
+        localIndex + math.max(anchorText.length, 1),
+      );
+    }
+
+    final candidates = exactMatches.isEmpty
+        ? _normalizedAnchorCandidates(
+            sourceText: source.text,
+            anchorText: anchorText,
+            searchStart: searchStart,
+            searchEnd: searchEnd,
+          )
+        : exactMatches;
+    if (candidates.isEmpty) return null;
+
+    int? bestIndex;
+    var bestScore = -1;
+    for (final localIndex in candidates) {
       final score = _anchorContextScore(
         sourceText: source.text,
         localIndex: localIndex,
@@ -753,10 +634,6 @@ class _EpubReaderViewState extends State<EpubReaderView> {
         bestScore = score;
         bestIndex = localIndex;
       }
-      localIndex = source.text.indexOf(
-        anchorText,
-        localIndex + math.max(anchorText.length, 1),
-      );
     }
     return bestIndex;
   }
@@ -773,9 +650,11 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       final prefixStart = math.max(0, localIndex - prefixText.length);
       final actualPrefix = sourceText.substring(prefixStart, localIndex);
       if (actualPrefix == prefixText) {
-        score += 4;
-      } else if (actualPrefix.endsWith(prefixText.trim())) {
-        score += 2;
+        score += _contextExactScore;
+      } else if (_normalizedAnchor(actualPrefix).endsWith(_normalizedAnchor(prefixText))) {
+        score += _contextSoftScore;
+      } else if (actualPrefix.trimRight().endsWith(prefixText.trim())) {
+        score += _contextWeakScore;
       }
     }
     if (suffixText.isNotEmpty) {
@@ -783,12 +662,39 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       final suffixEnd = math.min(sourceText.length, suffixStart + suffixText.length);
       final actualSuffix = sourceText.substring(suffixStart, suffixEnd);
       if (actualSuffix == suffixText) {
-        score += 4;
-      } else if (actualSuffix.startsWith(suffixText.trim())) {
-        score += 2;
+        score += _contextExactScore;
+      } else if (_normalizedAnchor(actualSuffix).startsWith(_normalizedAnchor(suffixText))) {
+        score += _contextSoftScore;
+      } else if (actualSuffix.trimLeft().startsWith(suffixText.trim())) {
+        score += _contextWeakScore;
       }
     }
     return score;
+  }
+
+  List<int> _normalizedAnchorCandidates({
+    required String sourceText,
+    required String anchorText,
+    required int searchStart,
+    required int searchEnd,
+  }) {
+    final normalizedNeedle = _normalizedAnchor(anchorText);
+    if (normalizedNeedle.length < 12) return const [];
+
+    final windowStart = searchStart.clamp(0, sourceText.length).toInt();
+    final windowEnd = searchEnd.clamp(windowStart, sourceText.length).toInt();
+    final candidates = <int>[];
+    final step = math.max(1, anchorText.length ~/ 3);
+    for (var index = windowStart; index < windowEnd; index += step) {
+      final end = math.min(sourceText.length, index + anchorText.length + 24);
+      final normalizedWindow = _normalizedAnchor(sourceText.substring(index, end));
+      if (normalizedWindow.startsWith(normalizedNeedle)) candidates.add(index);
+    }
+    return candidates;
+  }
+
+  String _normalizedAnchor(String value) {
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   String _anchorTextFor(ReaderAnnotation annotation) {
@@ -798,29 +704,18 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     return annotation.selectedText.trim();
   }
 
-  void _jumpToPage(EpubVirtualPage page) {
-    final index = page.pageNumber - 1;
-    _currentPageIndex = index;
-    if (_pageController?.hasClients ?? false) {
-      _pageController!.jumpToPage(index);
-    } else {
-      _resetPageController(index);
-    }
-    _notifyPositionChanged();
-  }
+  void _schedulePendingRestore() {
+    final range = _pendingRestoreRange;
+    if (range == null) return;
 
-  bool _jumpToPageNumber(int pageNumber) {
-    final page = _pageMap?.pageNumber(pageNumber);
-    if (page == null) return false;
-    _jumpToPage(page);
-    return true;
-  }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final pending = _pendingRestoreRange;
+      if (pending == null) return;
 
-  bool _jumpToProgress(double progress) {
-    final page = _pageMap?.pageForProgress(progress);
-    if (page == null) return false;
-    _jumpToPage(page);
-    return true;
+      _pendingRestoreRange = null;
+      _scrollToSourceLocation(pending.start);
+    });
   }
 
   void _schedulePositionUpdate() {
@@ -830,19 +725,17 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   }
 
   void _notifyPositionChanged() {
-    final pageMap = _pageMap;
-    if (pageMap == null || pageMap.isEmpty) return;
-    final page = pageMap.pageAtIndex(_currentPageIndex);
-    if (page == null) return;
+    final range = _currentVisibleSourceRange();
+    if (range == null) return;
 
-    final progress = pageMap.totalPages <= 0
-        ? 0.0
-        : (page.pageNumber / pageMap.totalPages).clamp(0.0, 1.0).toDouble();
-    final locationRef = _locationRefForPage(
-      page: page,
-      localStart: page.localStart,
-      localEnd: page.localStart,
-      anchorText: _anchorTextAt(page),
+    _activeSourceRange = range;
+    if (_lastNotifiedSourceOffset == range.globalStartOffset) return;
+    _lastNotifiedSourceOffset = range.globalStartOffset;
+
+    final progress = _progressForRange(range);
+    final locationRef = _locationRefForRange(
+      range: range,
+      anchorText: _anchorTextAt(range),
     );
 
     widget.onProgressChanged?.call(progress);
@@ -850,79 +743,153 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       EpubReaderPosition(
         progress: progress,
         locationRef: locationRef,
-        currentPage: page.pageNumber,
-        totalPages: pageMap.totalPages,
+        currentPage: range.sourceIndex + 1,
+        totalPages: _loadedDocument?.sources.length ?? 1,
       ),
     );
   }
 
-  void _handleSelectionChanged(EpubVirtualPage page, ReaderSelection? selection) {
-    if (selection == null) {
-      widget.onSelectionChanged(null);
-      return;
+  EpubSourceRange? _currentVisibleSourceRange() {
+    final document = _loadedDocument;
+    if (document == null || document.isEmpty) return null;
+
+    if (!_scrollController.hasClients) {
+      return _activeSourceRange ?? document.rangeAtStart;
     }
 
-    widget.onSelectionChanged(
-      ReaderSelection(
-        text: selection.text,
-        startIndex: selection.startIndex,
-        endIndex: selection.endIndex,
-        locationRef: _locationRefForPage(
-          page: page,
-          localStart: selection.startIndex,
-          localEnd: selection.endIndex,
-          anchorText: selection.text,
+    final position = _scrollController.position;
+    if ((position.maxScrollExtent - position.pixels).abs() <= 1) {
+      return document.rangeAtEnd;
+    }
+
+    final scrollBox = context.findRenderObject() as RenderBox?;
+    if (scrollBox == null || !scrollBox.hasSize) {
+      return _activeSourceRange ?? document.rangeAtStart;
+    }
+
+    final viewportTop = scrollBox.localToGlobal(Offset.zero).dy;
+    final viewportHeight = position.viewportDimension;
+    final probeY = viewportTop + math.min(_visibleProbeInset, viewportHeight * 0.35);
+
+    _EpubChapterSource? closestSource;
+    double closestDistance = double.infinity;
+
+    for (final source in document.sources) {
+      final keyContext = _chapterKeys[source.index]?.currentContext;
+      final box = keyContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+      if (probeY >= top && probeY <= bottom) {
+        final localOffset = _localOffsetForY(
+          source: source,
+          localY: probeY - top,
+          textWidth: math.min(box.size.width, widget.maxWidth),
+        );
+        return document.sourceRangeFor(
+          source: source,
+          localStart: localOffset,
+          localEnd: localOffset,
+        );
+      }
+
+      final distance = probeY < top ? top - probeY : probeY - bottom;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSource = source;
+      }
+    }
+
+    final source = closestSource ?? document.sources.first;
+    final offset = position.pixels <= 0 ? 0 : source.text.length;
+    return document.sourceRangeFor(
+      source: source,
+      localStart: offset,
+      localEnd: offset,
+    );
+  }
+
+  int _localOffsetForY({
+    required _EpubChapterSource source,
+    required double localY,
+    required double textWidth,
+  }) {
+    if (source.text.isEmpty || textWidth <= 0) return 0;
+
+    final textPainter = _textPainter(source.text, textWidth);
+    final safeY = localY.clamp(0.0, textPainter.height).toDouble();
+    final position = textPainter.getPositionForOffset(Offset(0, safeY));
+    return position.offset.clamp(0, source.text.length).toInt();
+  }
+
+  TextPainter _textPainter(String text, double maxWidth) {
+    return TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: widget.fontSize,
+          height: widget.lineHeight,
+          letterSpacing: 0,
         ),
       ),
-    );
+      textAlign: TextAlign.start,
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: maxWidth);
   }
 
   String? _currentLocationRef() {
-    final page = _pageMap?.pageAtIndex(_currentPageIndex);
-    if (page == null) return null;
-    return _locationRefForPage(
-      page: page,
-      localStart: page.localStart,
-      localEnd: page.localStart,
-      anchorText: _anchorTextAt(page),
+    final range = _currentVisibleSourceRange();
+    if (range == null) return null;
+
+    return _locationRefForRange(
+      range: range,
+      anchorText: _anchorTextAt(range),
     );
   }
 
-  String _locationRefForPage({
-    required EpubVirtualPage page,
-    required int localStart,
-    required int localEnd,
+  String _locationRefForRange({
+    required EpubSourceRange range,
     required String anchorText,
   }) {
-    final pageMap = _pageMap;
-    final totalPages = pageMap?.totalPages ?? 0;
-    final source = _loadedDocument?.sourceAtIndex(page.sourceIndex);
-    final sourceText = source?.text ?? page.text;
-    final safeLocalStart = localStart.clamp(0, sourceText.length).toInt();
-    final safeLocalEnd = localEnd.clamp(0, sourceText.length).toInt();
+    final document = _loadedDocument;
+    final source = document?.sourceAtIndex(range.sourceIndex);
+    final sourceText = source?.text ?? '';
+    final safeLocalStart = range.localStart.clamp(0, sourceText.length).toInt();
+    final safeLocalEnd = range.localEnd.clamp(safeLocalStart, sourceText.length).toInt();
     final prefixStart = math.max(0, safeLocalStart - _anchorContextLength);
     final suffixEnd = math.min(sourceText.length, safeLocalEnd + _anchorContextLength);
-    final progress = totalPages <= 0
-        ? 0.0
-        : (page.pageNumber / totalPages).clamp(0.0, 1.0).toDouble();
+    final sourceLength = document?.textLength ?? 0;
+    final progress = _progressForRange(range);
 
-    return 'epub:page=${page.pageNumber};'
-        'totalPages=$totalPages;'
-        'chapter=${page.sourceIndex};'
-        'path=${_encodeLocationValue(page.chapterPath)};'
+    return 'epub:chapter=${range.sourceIndex};'
+        'path=${_encodeLocationValue(range.chapterPath)};'
         'localStart=$safeLocalStart;'
         'localEnd=$safeLocalEnd;'
+        'sourceOffset=${range.globalStartOffset};'
+        'sourceLength=$sourceLength;'
         'anchor=${_encodeLocationValue(anchorText)};'
         'prefix=${_encodeLocationValue(sourceText.substring(prefixStart, safeLocalStart))};'
         'suffix=${_encodeLocationValue(sourceText.substring(safeLocalEnd, suffixEnd))};'
-        'layout=${_encodeLocationValue(pageMap?.layout.cacheKey ?? '')};'
         'progress=${progress.toStringAsFixed(4)}';
   }
 
-  String _anchorTextAt(EpubVirtualPage page) {
-    final source = _loadedDocument?.sourceAtIndex(page.sourceIndex);
-    final sourceText = source?.text ?? page.text;
-    final localIndex = page.localStart.clamp(0, sourceText.length).toInt();
+  double _progressForRange(EpubSourceRange range) {
+    final document = _loadedDocument;
+    final source = document?.sourceAtIndex(range.sourceIndex);
+    if (document == null || source == null) return 0.0;
+
+    return document.progressForSourceLocation(
+      source: source,
+      localOffset: range.localStart,
+    );
+  }
+
+  String _anchorTextAt(EpubSourceRange range) {
+    final source = _loadedDocument?.sourceAtIndex(range.sourceIndex);
+    final sourceText = source?.text ?? '';
+    final localIndex = range.localStart.clamp(0, sourceText.length).toInt();
     final end = math.min(sourceText.length, localIndex + _anchorTextLength);
     return sourceText.substring(localIndex, end);
   }
@@ -930,13 +897,13 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   String _encodeLocationValue(String value) => Uri.encodeComponent(value);
 }
 
-_EpubDocument _extractEpubDocumentFromBytes(List<int> bytes) {
+_EpubSourceModel _extractEpubDocumentFromBytes(List<int> bytes) {
   final archive = ZipDecoder().decodeBytes(bytes, verify: false);
   final files = <String, ArchiveFile>{
     for (final file in archive.files) _normalizeZipPath(file.name): file,
   };
   final htmlPaths = files.keys.where(_isHtmlFile).toSet();
-  if (htmlPaths.isEmpty) return const _EpubDocument(sources: []);
+  if (htmlPaths.isEmpty) return const _EpubSourceModel(sources: []);
 
   final orderedPaths = _orderedHtmlPaths(files, htmlPaths);
   final paths = orderedPaths.isEmpty
@@ -965,10 +932,10 @@ _EpubDocument _extractEpubDocumentFromBytes(List<int> bytes) {
         bookStartOffset: bookCursor,
       ),
     );
-    bookCursor += text.length + 2;
+    bookCursor += text.length;
   }
 
-  return _EpubDocument(sources: sources);
+  return _EpubSourceModel(sources: sources);
 }
 
 List<String> _orderedHtmlPaths(Map<String, ArchiveFile> files, Set<String> htmlPaths) {
@@ -1082,8 +1049,8 @@ String _plainTextFromHtml(String html) {
       .trim();
 }
 
-class _EpubDocument {
-  const _EpubDocument({required this.sources});
+class _EpubSourceModel {
+  const _EpubSourceModel({required this.sources});
 
   final List<_EpubChapterSource> sources;
 
@@ -1095,8 +1062,18 @@ class _EpubDocument {
     return last.bookStartOffset + last.text.length;
   }
 
-  String get cacheSeed {
-    return sources.map((source) => '${source.path}:${source.text.length}').join('|');
+  EpubSourceRange get rangeAtStart {
+    final source = sources.first;
+    return sourceRangeFor(source: source, localStart: 0, localEnd: 0);
+  }
+
+  EpubSourceRange get rangeAtEnd {
+    final source = sources.last;
+    return sourceRangeFor(
+      source: source,
+      localStart: source.text.length,
+      localEnd: source.text.length,
+    );
   }
 
   _EpubChapterSource? sourceAtIndex(int index) {
@@ -1109,6 +1086,90 @@ class _EpubDocument {
       if (source.path == path) return source;
     }
     return null;
+  }
+
+  _EpubSourceLocation? sourceLocationForProgress(double progress) {
+    if (isEmpty || progress.isNaN) return null;
+
+    final clamped = progress.isFinite
+        ? progress.clamp(0.0, 1.0).toDouble()
+        : progress.isNegative
+            ? 0.0
+            : 1.0;
+    final sourceOffset = clamped >= 1.0
+        ? textLength
+        : (textLength * clamped).floor().clamp(0, textLength).toInt();
+    return sourceLocationForOffset(sourceOffset);
+  }
+
+  _EpubSourceLocation? sourceLocationForOffset(int sourceOffset) {
+    if (isEmpty) return null;
+
+    final safeOffset = sourceOffset.clamp(0, textLength).toInt();
+    _EpubChapterSource? previousSource;
+
+    for (var index = 0; index < sources.length; index++) {
+      final source = sources[index];
+      if (safeOffset < source.bookStartOffset) {
+        if (previousSource == null) {
+          return _EpubSourceLocation(source: source, localOffset: 0);
+        }
+        return _EpubSourceLocation(
+          source: previousSource,
+          localOffset: previousSource.text.length,
+        );
+      }
+
+      final sourceEndOffset = source.bookStartOffset + source.text.length;
+      final isLastSource = index == sources.length - 1;
+      if (safeOffset < sourceEndOffset || (isLastSource && safeOffset <= sourceEndOffset)) {
+        return _EpubSourceLocation(
+          source: source,
+          localOffset: (safeOffset - source.bookStartOffset)
+              .clamp(0, source.text.length)
+              .toInt(),
+        );
+      }
+
+      previousSource = source;
+    }
+
+    final last = sources.last;
+    return _EpubSourceLocation(source: last, localOffset: last.text.length);
+  }
+
+  double progressForSourceLocation({
+    required _EpubChapterSource source,
+    required int localOffset,
+  }) {
+    if (textLength <= 0) return 0.0;
+
+    final safeLocalOffset = localOffset.clamp(0, source.text.length).toInt();
+    final sourceOffset = source.bookStartOffset + safeLocalOffset;
+    return (sourceOffset / textLength).clamp(0.0, 1.0).toDouble();
+  }
+
+  EpubSourceRange sourceRangeFor({
+    required _EpubChapterSource source,
+    required int localStart,
+    required int localEnd,
+  }) {
+    final safeStart = localStart.clamp(0, source.text.length).toInt();
+    final safeEnd = localEnd.clamp(safeStart, source.text.length).toInt();
+    final start = EpubSourceLocation(
+      chapterPath: source.path,
+      sourceIndex: source.index,
+      localOffset: safeStart,
+      globalOffset: source.bookStartOffset + safeStart,
+    );
+    final end = EpubSourceLocation(
+      chapterPath: source.path,
+      sourceIndex: source.index,
+      localOffset: safeEnd,
+      globalOffset: source.bookStartOffset + safeEnd,
+    );
+
+    return EpubSourceRange(start: start, end: end);
   }
 }
 
@@ -1124,6 +1185,16 @@ class _EpubChapterSource {
   final String path;
   final String text;
   final int bookStartOffset;
+}
+
+class _EpubSourceLocation {
+  const _EpubSourceLocation({
+    required this.source,
+    required this.localOffset,
+  });
+
+  final _EpubChapterSource source;
+  final int localOffset;
 }
 
 class _DocumentError extends StatelessWidget {

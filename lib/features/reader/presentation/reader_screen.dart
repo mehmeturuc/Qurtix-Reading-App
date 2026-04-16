@@ -37,17 +37,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final EpubReaderController _epubReaderController = EpubReaderController();
   final PdfReaderController _pdfReaderController = PdfReaderController();
 
-  double _fontSize = 18;
-  double _lineHeight = 1.65;
+  double _fontSize = 15;
+  double _lineHeight = 1.7;
   bool _isWideText = false;
   ReaderSelection? _selection;
   String? _focusedAnnotationId;
+  String? _annotationFeedback;
   ReaderAnnotation? _openingTarget;
   bool _didHandleInitialAnnotation = false;
   int _initialAnnotationAttempts = 0;
   final ValueNotifier<double> _readingProgress = ValueNotifier<double>(0);
   final ValueNotifier<String> _positionLabel = ValueNotifier<String>(
-    'Progress 0%',
+    '0%',
   );
   ReaderThemeMode _themeMode = ReaderThemeMode.light;
 
@@ -71,6 +72,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   String? _lastSavedLocationRef;
   String? _pendingReadingLocationRef;
   Timer? _readingPositionSaveTimer;
+  Timer? _focusedAnnotationTimer;
+  Timer? _annotationFeedbackTimer;
 
   @override
   void initState() {
@@ -96,6 +99,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void dispose() {
     _readingPositionSaveTimer?.cancel();
+    _focusedAnnotationTimer?.cancel();
+    _annotationFeedbackTimer?.cancel();
     _commitReadingPosition();
     _scrollController
       ..removeListener(_updateReadingProgress)
@@ -142,41 +147,42 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
           actions: [
             IconButton(
-              onPressed: _openDirectNavigation,
-              icon: const Icon(Icons.near_me_rounded),
-              tooltip: _sourceType == BookFileType.pdf
-                  ? 'Go to page'
-                  : 'Go to progress',
+              onPressed: _openBookAnnotations,
+              icon: const Icon(Icons.notes_rounded),
+              tooltip: 'Notes and highlights',
             ),
-            PopupMenuButton<_BookmarkAction>(
-              tooltip: 'Bookmark',
-              icon: const Icon(Icons.bookmark_border_rounded),
-              onSelected: _handleBookmarkAction,
+            PopupMenuButton<_ReaderOverflowAction>(
+              tooltip: 'Reader options',
+              icon: const Icon(Icons.more_vert_rounded),
+              onSelected: _handleReaderOverflowAction,
               itemBuilder: (context) {
                 final hasBookmark = _bookmarkAnnotation() != null;
 
                 return [
-                  const PopupMenuItem<_BookmarkAction>(
-                    value: _BookmarkAction.save,
+                  PopupMenuItem<_ReaderOverflowAction>(
+                    value: _ReaderOverflowAction.goToPosition,
+                    child: Text(
+                      _sourceType == BookFileType.pdf
+                          ? 'Go to page'
+                          : 'Go to progress',
+                    ),
+                  ),
+                  const PopupMenuItem<_ReaderOverflowAction>(
+                    value: _ReaderOverflowAction.saveBookmark,
                     child: Text('Save bookmark'),
                   ),
-                  PopupMenuItem<_BookmarkAction>(
-                    value: _BookmarkAction.jump,
+                  PopupMenuItem<_ReaderOverflowAction>(
+                    value: _ReaderOverflowAction.goToBookmark,
                     enabled: hasBookmark,
                     child: const Text('Go to bookmark'),
                   ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<_ReaderOverflowAction>(
+                    value: _ReaderOverflowAction.readingSettings,
+                    child: Text('Reading settings'),
+                  ),
                 ];
               },
-            ),
-            IconButton(
-              onPressed: _openBookAnnotations,
-              icon: const Icon(Icons.sticky_note_2_outlined),
-              tooltip: 'Book annotations',
-            ),
-            IconButton(
-              onPressed: _openControls,
-              icon: const Icon(Icons.tune_rounded),
-              tooltip: 'Reading settings',
             ),
           ],
           bottom: PreferredSize(
@@ -201,13 +207,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _buildReaderBody(ReaderThemeMode mode) {
     final reader = switch (_sourceType) {
-      BookFileType.pdf => PdfReaderView(
-        filePath: widget.book.filePath,
-        backgroundColor: mode.backgroundColor,
-        controller: _pdfReaderController,
-        initialPage: _openingTarget?.pdfPageNumber,
-        onPositionChanged: _handlePdfPositionChanged,
-        onSelectionChanged: _handleTextSelectionChanged,
+      BookFileType.pdf => ValueListenableBuilder<List<ReaderAnnotation>>(
+        valueListenable: widget.annotationRepository.watchAnnotations(),
+        builder: (context, annotations, _) {
+          final bookAnnotations = _annotationsForCurrentBook(annotations)
+              .where((annotation) => annotation.isUserAnnotation)
+              .toList(growable: false);
+          _syncDeletedAnnotationState(bookAnnotations);
+
+          return PdfReaderView(
+            filePath: widget.book.filePath,
+            annotations: bookAnnotations,
+            backgroundColor: mode.backgroundColor,
+            controller: _pdfReaderController,
+            initialPage: _openingTarget?.pdfPageNumber,
+            onPositionChanged: _handlePdfPositionChanged,
+            onSelectionChanged: _handleTextSelectionChanged,
+            onSelectionFailure: _showReaderMessage,
+          );
+        },
       ),
       BookFileType.epub => ValueListenableBuilder<List<ReaderAnnotation>>(
         valueListenable: widget.annotationRepository.watchAnnotations(),
@@ -240,6 +258,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return Stack(
       children: [
         reader,
+        _ReaderEdgeFade(
+          alignment: Alignment.topCenter,
+          backgroundColor: mode.backgroundColor,
+        ),
+        _ReaderEdgeFade(
+          alignment: Alignment.bottomCenter,
+          backgroundColor: mode.backgroundColor,
+        ),
+        _buildAnnotationFeedback(mode),
         _buildPositionBadge(mode),
         _buildSelectionActionBar(mode),
       ],
@@ -254,7 +281,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: SingleChildScrollView(
             controller: _scrollController,
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 56),
+            padding: const EdgeInsets.fromLTRB(24, 40, 24, 80),
             child: ValueListenableBuilder<List<ReaderAnnotation>>(
               valueListenable: widget.annotationRepository.watchAnnotations(),
               builder: (context, annotations, _) {
@@ -301,6 +328,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           alignment: Alignment.bottomCenter,
           backgroundColor: mode.backgroundColor,
         ),
+        _buildAnnotationFeedback(mode),
         _buildPositionBadge(mode),
         _buildSelectionActionBar(mode),
       ],
@@ -309,7 +337,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _buildPositionBadge(ReaderThemeMode mode) {
     return Positioned(
-      top: 16,
+      top: 12,
       right: 16,
       child: SafeArea(
         child: ValueListenableBuilder<String>(
@@ -328,16 +356,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _buildSelectionActionBar(ReaderThemeMode mode) {
-    if (_selection == null) return const SizedBox.shrink();
-
     return _SelectionActionBar(
+      isVisible: _selection != null,
       backgroundColor: mode.backgroundColor,
       textColor: mode.textColor,
       borderColor: mode.textColor.withValues(alpha: 0.12),
-      isPdf: _sourceType == BookFileType.pdf,
       onHighlight: _openHighlightSheet,
       onAddNote: _openAddNoteSheet,
       onDismiss: _clearSelection,
+    );
+  }
+
+  Widget _buildAnnotationFeedback(ReaderThemeMode mode) {
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: 86,
+      child: SafeArea(
+        child: _AnnotationFeedbackPill(
+          message: _annotationFeedback,
+          backgroundColor: mode.backgroundColor,
+          textColor: mode.textColor,
+          borderColor: mode.textColor.withValues(alpha: 0.10),
+        ),
+      ),
     );
   }
 
@@ -374,12 +416,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return null;
   }
 
-  void _handleBookmarkAction(_BookmarkAction action) {
+  void _handleReaderOverflowAction(_ReaderOverflowAction action) {
     switch (action) {
-      case _BookmarkAction.save:
+      case _ReaderOverflowAction.goToPosition:
+        _openDirectNavigation();
+      case _ReaderOverflowAction.saveBookmark:
         _saveBookmark();
-      case _BookmarkAction.jump:
+      case _ReaderOverflowAction.goToBookmark:
         _jumpToBookmark();
+      case _ReaderOverflowAction.readingSettings:
+        _openControls();
     }
   }
 
@@ -424,16 +470,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final page = annotation.pdfPageNumber;
         if (page == null) return false;
         _pdfReaderController.jumpToPage(page);
+        if (annotation.isUserAnnotation) _showAnnotationFeedback('Annotation found');
         return true;
       case BookFileType.epub:
         final didJump = _epubReaderController.jumpToAnnotation(annotation);
-        if (didJump && annotation.isUserAnnotation) {
-          setState(() => _focusedAnnotationId = annotation.id);
-          Future<void>.delayed(const Duration(milliseconds: 1200), () {
-            if (!mounted || _focusedAnnotationId != annotation.id) return;
-            setState(() => _focusedAnnotationId = null);
-          });
-        }
+        if (didJump && annotation.isUserAnnotation) _focusAnnotation(annotation);
         return didJump;
       case BookFileType.plainText:
         final progress = annotation.epubProgress;
@@ -452,8 +493,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   String get _bookmarkLabel {
     return switch (_sourceType) {
       BookFileType.pdf => 'Page $_currentPdfPage',
-      BookFileType.epub => 'Progress ${_displayPercent(_currentProgress)}%',
-      BookFileType.plainText => 'Progress ${(_currentProgress * 100).round()}%',
+      BookFileType.epub => '${_displayPercent(_currentProgress)}%',
+      BookFileType.plainText => '${(_currentProgress * 100).round()}%',
     };
   }
 
@@ -562,6 +603,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _handleTextSelectionChanged(ReaderSelection? value) {
+    if (_selection?.text == value?.text &&
+        _selection?.startIndex == value?.startIndex &&
+        _selection?.endIndex == value?.endIndex &&
+        _selection?.locationRef == value?.locationRef) {
+      return;
+    }
+
     setState(() => _selection = value);
   }
 
@@ -628,24 +676,65 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required AnnotationDraft draft,
     required ReaderAnnotationType type,
   }) {
+    if (_sourceType == BookFileType.pdf &&
+        !_hasUsablePdfHighlightBounds(selection.locationRef)) {
+      _clearSelection();
+      _showReaderMessage(
+        'This part of the PDF may not support clean text highlighting.',
+      );
+      return;
+    }
+
     final now = DateTime.now();
 
-    widget.annotationRepository.addAnnotation(
-      ReaderAnnotation(
-        id: now.microsecondsSinceEpoch.toString(),
-        bookId: widget.book.id,
-        selectedText: selection.text,
-        noteText: type == ReaderAnnotationType.note ? draft.noteText : '',
-        type: type,
-        colorId: draft.colorId,
-        isFavorite: draft.isFavorite,
-        createdAt: now,
-        updatedAt: now,
-        locationRef:
-            selection.locationRef ??
-            '${selection.startIndex}:${selection.endIndex}',
-      ),
+    final annotation = ReaderAnnotation(
+      id: now.microsecondsSinceEpoch.toString(),
+      bookId: widget.book.id,
+      selectedText: selection.text,
+      noteText: type == ReaderAnnotationType.note ? draft.noteText : '',
+      type: type,
+      colorId: draft.colorId,
+      isFavorite: draft.isFavorite,
+      createdAt: now,
+      updatedAt: now,
+      locationRef:
+          selection.locationRef ??
+          '${selection.startIndex}:${selection.endIndex}',
     );
+    widget.annotationRepository.addAnnotation(annotation);
+    if (_sourceType == BookFileType.pdf) _pdfReaderController.clearSelection();
+    _focusAnnotation(annotation);
+    _showAnnotationFeedback(
+      type == ReaderAnnotationType.highlight ? 'Highlight saved' : 'Note saved',
+    );
+  }
+
+  bool _hasUsablePdfHighlightBounds(String? locationRef) {
+    if (locationRef == null || !locationRef.startsWith('pdf:')) return false;
+
+    for (final part in locationRef.substring(4).split(';')) {
+      final separatorIndex = part.indexOf('=');
+      if (separatorIndex <= 0) continue;
+
+      final key = part.substring(0, separatorIndex).trim();
+      if (key != 'rects') continue;
+
+      final rects = part.substring(separatorIndex + 1).trim();
+      if (rects.isEmpty) return false;
+
+      for (final encodedRect in rects.split(',')) {
+        final values = encodedRect.split('_');
+        if (values.length != 4) continue;
+
+        final width = double.tryParse(values[2]);
+        final height = double.tryParse(values[3]);
+        if (width != null && height != null && width > 0 && height > 0) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   void _deleteAnnotation(ReaderAnnotation annotation) {
@@ -661,6 +750,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _clearSelection() {
+    if (_sourceType == BookFileType.pdf) _pdfReaderController.clearSelection();
     setState(() => _selection = null);
   }
 
@@ -703,13 +793,39 @@ class _ReaderScreenState extends State<ReaderScreen> {
       curve: Curves.easeOutCubic,
     );
 
-    setState(() => _focusedAnnotationId = annotation.id);
-    Future<void>.delayed(const Duration(milliseconds: 1200), () {
+    _focusAnnotation(annotation);
+
+    return true;
+  }
+
+  void _focusAnnotation(ReaderAnnotation annotation) {
+    if (!annotation.isUserAnnotation) return;
+
+    _focusedAnnotationTimer?.cancel();
+    if (mounted) {
+      setState(() => _focusedAnnotationId = annotation.id);
+    } else {
+      _focusedAnnotationId = annotation.id;
+    }
+
+    _focusedAnnotationTimer = Timer(const Duration(milliseconds: 1200), () {
       if (!mounted || _focusedAnnotationId != annotation.id) return;
       setState(() => _focusedAnnotationId = null);
     });
+  }
 
-    return true;
+  void _showAnnotationFeedback(String message) {
+    _annotationFeedbackTimer?.cancel();
+    if (mounted) {
+      setState(() => _annotationFeedback = message);
+    } else {
+      _annotationFeedback = message;
+    }
+
+    _annotationFeedbackTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (!mounted || _annotationFeedback != message) return;
+      setState(() => _annotationFeedback = null);
+    });
   }
 
   void _scheduleInitialAnnotationJump() {
@@ -777,7 +893,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _currentProgress = clampedProgress;
     _currentLocationRef = 'epub:progress=${clampedProgress.toStringAsFixed(4)}';
-    _positionLabel.value = 'Progress ${(clampedProgress * 100).round()}%';
+    _positionLabel.value = _percentLabel(clampedProgress);
     _saveReadingPosition();
   }
 
@@ -795,7 +911,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     _currentProgress = clampedProgress;
     _currentLocationRef = 'epub:progress=${clampedProgress.toStringAsFixed(4)}';
-    _positionLabel.value = 'Progress ${(clampedProgress * 100).round()}%';
+    _positionLabel.value = _percentLabel(clampedProgress);
     _saveReadingPosition();
   }
 
@@ -807,7 +923,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     _currentProgress = progress;
     _currentLocationRef = position.locationRef;
-    _positionLabel.value = position.label;
+    _positionLabel.value = _percentLabel(progress);
     _saveReadingPosition();
   }
 
@@ -821,7 +937,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _currentPdfPage = position.currentPage;
     _currentPdfTotalPages = position.totalPages;
     _currentLocationRef = 'pdf:page=${position.currentPage}';
-    _positionLabel.value = position.label;
+    _positionLabel.value = _pdfPositionLabel(position);
     _saveReadingPosition();
   }
 
@@ -884,14 +1000,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 .toList(growable: false);
 
             if (bookAnnotations.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.fromLTRB(20, 18, 20, 28),
-                child: Text('No notes, highlights, or bookmarks yet.'),
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+                child: Text(
+                  'No notes or highlights yet.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
               );
             }
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
               child: ReaderAnnotationsSection(
                 annotations: bookAnnotations,
                 textColor: mode.textColor,
@@ -938,6 +1057,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
   int _displayPercent(double progress) {
     return (progress.clamp(0.0, 1.0) * 100).floor();
   }
+
+  String _percentLabel(double progress) {
+    return '${(progress.clamp(0.0, 1.0) * 100).round()}%';
+  }
+
+  String _pdfPositionLabel(PdfReaderPosition position) {
+    if (position.totalPages <= 0) return 'Page ${position.currentPage}';
+
+    return '${position.currentPage} / ${position.totalPages}';
+  }
 }
 
 class _ReaderEdgeFade extends StatelessWidget {
@@ -964,14 +1093,19 @@ class _ReaderEdgeFade extends StatelessWidget {
               colors: [backgroundColor, backgroundColor.withValues(alpha: 0)],
             ),
           ),
-          child: const SizedBox(height: 36, width: double.infinity),
+          child: const SizedBox(height: 28, width: double.infinity),
         ),
       ),
     );
   }
 }
 
-enum _BookmarkAction { save, jump }
+enum _ReaderOverflowAction {
+  goToPosition,
+  saveBookmark,
+  goToBookmark,
+  readingSettings,
+}
 
 class _PageNavigationDialog extends StatefulWidget {
   const _PageNavigationDialog({
@@ -1104,19 +1238,37 @@ class _ReaderPositionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: backgroundColor.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: borderColor),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: textColor,
-            fontWeight: FontWeight.w800,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeOutCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.08),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: DecoratedBox(
+        key: ValueKey(label),
+        decoration: BoxDecoration(
+          color: backgroundColor.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: borderColor),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: textColor.withValues(alpha: 0.78),
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),
@@ -1126,19 +1278,19 @@ class _ReaderPositionBadge extends StatelessWidget {
 
 class _SelectionActionBar extends StatelessWidget {
   const _SelectionActionBar({
+    required this.isVisible,
     required this.backgroundColor,
     required this.textColor,
     required this.borderColor,
-    required this.isPdf,
     required this.onHighlight,
     required this.onAddNote,
     required this.onDismiss,
   });
 
+  final bool isVisible;
   final Color backgroundColor;
   final Color textColor;
   final Color borderColor;
-  final bool isPdf;
   final VoidCallback onHighlight;
   final VoidCallback onAddNote;
   final VoidCallback onDismiss;
@@ -1148,60 +1300,120 @@ class _SelectionActionBar extends StatelessWidget {
     return Positioned(
       left: 16,
       right: 16,
-      bottom: 16,
+      bottom: 18,
       child: SafeArea(
-        child: Center(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: borderColor),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.10),
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton.icon(
-                        onPressed: onHighlight,
-                        icon: const Icon(Icons.border_color_rounded, size: 18),
-                        label: const Text('Highlight'),
-                      ),
-                      const SizedBox(width: 4),
-                      FilledButton.tonalIcon(
-                        onPressed: onAddNote,
-                        icon: const Icon(Icons.note_add_outlined, size: 18),
-                        label: const Text('Note'),
-                      ),
-                      const SizedBox(width: 2),
-                      IconButton(
-                        onPressed: onDismiss,
-                        icon: Icon(Icons.close_rounded, color: textColor),
-                        tooltip: 'Dismiss',
+        child: AnimatedSlide(
+          offset: isVisible ? Offset.zero : const Offset(0, 0.18),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: AnimatedOpacity(
+            opacity: isVisible ? 1 : 0,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            child: IgnorePointer(
+              ignoring: !isVisible,
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: backgroundColor.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: borderColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
                       ),
                     ],
                   ),
-                  if (isPdf)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
-                      child: Text(
-                        'Saved in Notes; PDF pages are not marked yet.',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: textColor.withValues(alpha: 0.68),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton.icon(
+                          onPressed: onHighlight,
+                          icon: const Icon(Icons.border_color_rounded, size: 17),
+                          label: const Text('Highlight'),
                         ),
-                      ),
+                        const SizedBox(width: 2),
+                        FilledButton.tonalIcon(
+                          onPressed: onAddNote,
+                          icon: const Icon(Icons.note_add_outlined, size: 17),
+                          label: const Text('Note'),
+                        ),
+                        const SizedBox(width: 1),
+                        IconButton(
+                          onPressed: onDismiss,
+                          icon: Icon(
+                            Icons.close_rounded,
+                            color: textColor.withValues(alpha: 0.72),
+                          ),
+                          tooltip: 'Dismiss',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnnotationFeedbackPill extends StatelessWidget {
+  const _AnnotationFeedbackPill({
+    required this.message,
+    required this.backgroundColor,
+    required this.textColor,
+    required this.borderColor,
+  });
+
+  final String? message;
+  final Color backgroundColor;
+  final Color textColor;
+  final Color borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = this.message;
+
+    return AnimatedSlide(
+      offset: message == null ? const Offset(0, 0.14) : Offset.zero,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: message == null ? 0 : 1,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        child: IgnorePointer(
+          child: Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: backgroundColor.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.07),
+                    blurRadius: 12,
+                    offset: const Offset(0, 5),
+                  ),
                 ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                child: Text(
+                  message ?? '',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: textColor.withValues(alpha: 0.78),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
           ),

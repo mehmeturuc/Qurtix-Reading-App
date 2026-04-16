@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../annotation_display_text.dart';
 import '../../domain/annotation_color.dart';
 import '../../domain/reader_annotation.dart';
 
@@ -91,9 +92,13 @@ class _AnnotationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final markerColor = annotationColorById(annotation.colorId);
+    final selectedText = annotationSelectedTextForDisplay(annotation);
+    final noteText = plainAnnotationTextForDisplay(annotation.noteText);
 
     return Material(
       color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => onTap(annotation),
         borderRadius: BorderRadius.circular(8),
@@ -104,85 +109,88 @@ class _AnnotationCard extends StatelessWidget {
             border: Border.all(color: borderColor),
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 14),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: markerColor,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const SizedBox(width: 8, height: 48),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: markerColor,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const SizedBox(width: 8, height: 32),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
                             annotation.displayTypeLabel,
                             style: theme.textTheme.labelMedium?.copyWith(
                               color: mutedColor,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
+                              height: 1.1,
                             ),
                           ),
-                          if (annotation.isFavorite) ...[
-                            const SizedBox(width: 6),
+                          if (annotation.isFavorite)
                             Icon(
                               Icons.star_rounded,
                               size: 16,
                               color: mutedColor,
                             ),
-                          ],
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        annotation.selectedText,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        textDirection: _textDirectionFor(
-                          annotation.selectedText,
-                        ),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: textColor,
-                          height: 1.35,
-                        ),
-                      ),
-                      if (annotation.noteText.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          annotation.noteText,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: textColor,
-                            fontWeight: FontWeight.w600,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
+                    IconButton(
+                      onPressed: () => onDelete(annotation),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      color: mutedColor,
+                      tooltip:
+                          'Delete ${annotation.displayTypeLabel.toLowerCase()}',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(
+                    selectedText,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    textDirection: annotationTextDirection(selectedText),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: textColor,
+                      height: 1.42,
+                    ),
                   ),
                 ),
-                IconButton(
-                  onPressed: () => onDelete(annotation),
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  color: mutedColor,
-                  tooltip: 'Delete ${annotation.displayTypeLabel.toLowerCase()}',
-                ),
+                if (noteText.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Text(
+                      noteText,
+                      textDirection: annotationTextDirection(noteText),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.w700,
+                        height: 1.38,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
-  }
-
-  TextDirection? _textDirectionFor(String value) {
-    if (RegExp(r'[\u0590-\u08ff]').hasMatch(value)) return TextDirection.rtl;
-
-    return null;
   }
 }

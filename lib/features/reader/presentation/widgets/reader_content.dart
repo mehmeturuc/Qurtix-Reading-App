@@ -32,6 +32,7 @@ class ReaderContent extends StatefulWidget {
     this.annotationEndOffset,
     this.locationOffsetToRenderedOffset,
     this.renderedOffsetToLocationOffset,
+    this.textScaler,
     super.key,
   });
 
@@ -48,6 +49,7 @@ class ReaderContent extends StatefulWidget {
   final int? Function(ReaderAnnotation annotation)? annotationEndOffset;
   final int? Function(int locationOffset)? locationOffsetToRenderedOffset;
   final int Function(int renderedOffset)? renderedOffsetToLocationOffset;
+  final TextScaler? textScaler;
 
   @override
   State<ReaderContent> createState() => _ReaderContentState();
@@ -73,6 +75,7 @@ class _ReaderContentState extends State<ReaderContent> {
         oldWidget.annotationEndOffset != widget.annotationEndOffset ||
         oldWidget.locationOffsetToRenderedOffset !=
             widget.locationOffsetToRenderedOffset ||
+        oldWidget.textScaler != widget.textScaler ||
         !_sameAnnotations(oldWidget.annotations, widget.annotations)) {
       _spans = _buildTextSpans();
     }
@@ -80,7 +83,8 @@ class _ReaderContentState extends State<ReaderContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return Align(
+      alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: widget.maxWidth),
         child: SelectableText.rich(
@@ -100,6 +104,7 @@ class _ReaderContentState extends State<ReaderContent> {
             widget.onSelectionChanged(range);
           },
           textAlign: TextAlign.start,
+          textScaler: widget.textScaler,
           style: TextStyle(
             color: widget.textColor,
             fontSize: widget.fontSize,

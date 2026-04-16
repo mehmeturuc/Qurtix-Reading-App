@@ -89,6 +89,16 @@ class ReaderAnnotation {
     return value == null || value <= 0 ? null : value;
   }
 
+  int? get epubSourceOffset {
+    final value = int.tryParse(_epubValue('sourceOffset') ?? '');
+    return value == null || value < 0 ? null : value;
+  }
+
+  int? get epubSourceLength {
+    final value = int.tryParse(_epubValue('sourceLength') ?? '');
+    return value == null || value <= 0 ? null : value;
+  }
+
   int? get epubChapterIndex {
     final value = int.tryParse(epubChapter ?? '');
     return value == null || value < 0 ? null : value;
