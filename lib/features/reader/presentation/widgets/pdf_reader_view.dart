@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_core/theme.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:pdfrx/pdfrx.dart';
 
 import '../../domain/annotation_color.dart';
 import '../../domain/reader_annotation.dart';
@@ -41,19 +41,17 @@ class PdfReaderView extends StatelessWidget {
       return const _DocumentError(message: 'This PDF file could not be found.');
     }
 
-    return SfPdfViewerTheme(
-      data: SfPdfViewerThemeData(backgroundColor: surfaceColor),
-      child: ColoredBox(
-        color: surfaceColor,
-        child: _PdfSelectionReader(
-          file: file,
-          annotations: annotations,
-          controller: controller,
-          initialPage: initialPage,
-          onPositionChanged: onPositionChanged,
-          onSelectionChanged: onSelectionChanged,
-          onSelectionFailure: onSelectionFailure,
-        ),
+    return ColoredBox(
+      color: surfaceColor,
+      child: _PdfrxSelectionReader(
+        file: file,
+        annotations: annotations,
+        controller: controller,
+        initialPage: initialPage,
+        surfaceColor: surfaceColor,
+        onPositionChanged: onPositionChanged,
+        onSelectionChanged: onSelectionChanged,
+        onSelectionFailure: onSelectionFailure,
       ),
     );
   }
@@ -68,7 +66,7 @@ class PdfReaderView extends StatelessWidget {
 }
 
 class PdfReaderController {
-  _PdfSelectionReaderState? _state;
+  _PdfrxSelectionReaderState? _state;
 
   int get currentPage => _state?._currentPage ?? 1;
 
@@ -105,13 +103,14 @@ class PdfReaderPosition {
   }
 }
 
-class _PdfSelectionReader extends StatefulWidget {
-  const _PdfSelectionReader({
+class _PdfrxSelectionReader extends StatefulWidget {
+  const _PdfrxSelectionReader({
     required this.file,
     required this.annotations,
     required this.controller,
-    required this.onSelectionChanged,
     required this.initialPage,
+    required this.surfaceColor,
+    required this.onSelectionChanged,
     required this.onPositionChanged,
     required this.onSelectionFailure,
   });
@@ -119,37 +118,36 @@ class _PdfSelectionReader extends StatefulWidget {
   final File file;
   final List<ReaderAnnotation> annotations;
   final PdfReaderController? controller;
-  final ValueChanged<ReaderSelection?> onSelectionChanged;
   final int? initialPage;
+  final Color surfaceColor;
+  final ValueChanged<ReaderSelection?> onSelectionChanged;
   final ValueChanged<PdfReaderPosition>? onPositionChanged;
   final ValueChanged<String>? onSelectionFailure;
 
   @override
-  State<_PdfSelectionReader> createState() => _PdfSelectionReaderState();
+  State<_PdfrxSelectionReader> createState() => _PdfrxSelectionReaderState();
 }
 
-class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
-  static const int _annotationSyncBatchSize = 12;
-  static const double _documentZoomLevel = 1;
+class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
   static const double _documentPageSpacing = 12;
-  static const PdfPageLayoutMode _documentLayoutMode =
-      PdfPageLayoutMode.single;
-  static const PdfScrollDirection _documentScrollDirection =
-      PdfScrollDirection.horizontal;
+  static const Duration _pageJumpDuration = Duration(milliseconds: 220);
 
-  late final PdfViewerController _controller = PdfViewerController();
-  final GlobalKey<SfPdfViewerState> _viewerKey = GlobalKey<SfPdfViewerState>();
-  final Map<String, Annotation> _visibleAnnotations = {};
+  late final PdfViewerController _pdfController = PdfViewerController();
+
   int _currentPage = 1;
   int _totalPages = 0;
+  int _selectionGeneration = 0;
   bool _didJumpToInitialPage = false;
-  bool _documentLoaded = false;
   bool _didReportWeakSelection = false;
-  bool _annotationSyncScheduled = false;
-  int _annotationSyncGeneration = 0;
 
   @override
-  void didUpdateWidget(covariant _PdfSelectionReader oldWidget) {
+  void initState() {
+    super.initState();
+    widget.controller?._state = this;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PdfrxSelectionReader oldWidget) {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.controller != widget.controller) {
@@ -158,23 +156,13 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     }
 
     if (oldWidget.file.path != widget.file.path) {
-      for (final annotation in _visibleAnnotations.values) {
-        _controller.removeAnnotation(annotation);
-      }
       _currentPage = 1;
       _totalPages = 0;
+      _selectionGeneration++;
       _didJumpToInitialPage = false;
-      _documentLoaded = false;
       _didReportWeakSelection = false;
-      _annotationSyncScheduled = false;
-      _annotationSyncGeneration++;
-      _visibleAnnotations.clear();
       widget.onSelectionChanged(null);
       return;
-    }
-
-    if (!_sameAnnotations(oldWidget.annotations, widget.annotations)) {
-      _scheduleAnnotationSync();
     }
 
     if (oldWidget.initialPage != widget.initialPage) {
@@ -186,15 +174,7 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
   @override
   void dispose() {
     widget.controller?._state = null;
-    _annotationSyncGeneration++;
-    _controller.dispose();
     super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    widget.controller?._state = this;
   }
 
   @override
@@ -202,66 +182,22 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     return Stack(
       children: [
         Positioned.fill(
-          child: SfPdfViewer.file(
-            widget.file,
-            key: _viewerKey,
-            controller: _controller,
-            canShowHyperlinkDialog: false,
-            canShowPaginationDialog: false,
-            canShowScrollHead: false,
-            canShowScrollStatus: false,
-            canShowSignaturePadDialog: false,
-            canShowTextSelectionMenu: false,
-            enableTextSelection: true,
+          child: PdfViewer.file(
+            widget.file.path,
+            controller: _pdfController,
             initialPageNumber: _initialPageNumber,
-            initialZoomLevel: _documentZoomLevel,
-            pageLayoutMode: _documentLayoutMode,
-            pageSpacing: _documentPageSpacing,
-            scrollDirection: _documentScrollDirection,
-            onDocumentLoaded: (details) {
-              setState(() {
-                _totalPages = details.document.pages.count;
-                _currentPage =
-                    _controller.pageNumber.clamp(1, _safeTotalPages).toInt();
-                _documentLoaded = true;
-              });
-              _notifyPositionChanged();
-              _jumpToInitialPage();
-              _scheduleAnnotationSync();
-            },
-            onPageChanged: (details) {
-              setState(() => _currentPage = details.newPageNumber);
-              _notifyPositionChanged();
-            },
-            onTextSelectionChanged: (details) {
-              final selectedText = _normalizedSelectedText(details.selectedText);
-              if (selectedText.isEmpty) {
-                _didReportWeakSelection = false;
-                widget.onSelectionChanged(null);
-                return;
-              }
-
-              final pdfSelection = _usablePdfSelection();
-              if (pdfSelection == null) {
-                widget.onSelectionChanged(null);
-                _reportWeakSelection();
-                return;
-              }
-
-              _didReportWeakSelection = false;
-              widget.onSelectionChanged(
-                ReaderSelection(
-                  text: selectedText,
-                  startIndex: 0,
-                  endIndex: selectedText.length,
-                  locationRef: _pdfLocationRef(
-                    pdfSelection.page,
-                    selectedText,
-                    pdfSelection.lines,
-                  ),
-                ),
-              );
-            },
+            params: PdfViewerParams(
+              margin: _documentPageSpacing,
+              backgroundColor: widget.surfaceColor,
+              pageDropShadow: null,
+              scrollHorizontallyByMouseWheel: true,
+              layoutPages: _horizontalPageLayout,
+              enableTextSelection: true,
+              onTextSelectionChange: _handlePdfTextSelectionChanged,
+              onViewerReady: _handleViewerReady,
+              onPageChanged: _handlePageChanged,
+              pagePaintCallbacks: [_paintSavedHighlights],
+            ),
           ),
         ),
         Positioned(
@@ -287,6 +223,35 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     );
   }
 
+  PdfPageLayout _horizontalPageLayout(
+    List<PdfPage> pages,
+    PdfViewerParams params,
+  ) {
+    final height = pages.fold<double>(
+      0,
+      (previous, page) => math.max(previous, page.height),
+    ) + params.margin * 2;
+    final pageLayouts = <Rect>[];
+    var x = params.margin;
+
+    for (final page in pages) {
+      pageLayouts.add(
+        Rect.fromLTWH(
+          x,
+          (height - page.height) / 2,
+          page.width,
+          page.height,
+        ),
+      );
+      x += page.width + params.margin;
+    }
+
+    return PdfPageLayout(
+      pageLayouts: pageLayouts,
+      documentSize: Size(x, height),
+    );
+  }
+
   int get _safeTotalPages => _totalPages <= 0 ? 1 : _totalPages;
 
   int get _initialPageNumber {
@@ -296,37 +261,120 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     return page;
   }
 
-  _UsablePdfSelection? _usablePdfSelection() {
-    final selectedLines = _viewerKey.currentState?.getSelectedTextLines() ?? const [];
-    if (selectedLines.isEmpty) return null;
+  void _handleViewerReady(PdfDocument document, PdfViewerController controller) {
+    final pageCount = document.pages.length;
+    final page = (controller.pageNumber ?? _initialPageNumber)
+        .clamp(1, pageCount <= 0 ? 1 : pageCount)
+        .toInt();
 
-    final usableLines = selectedLines
-        .where(_hasUsableBounds)
-        .toList(growable: false);
-    if (usableLines.isEmpty) return null;
+    setState(() {
+      _totalPages = pageCount;
+      _currentPage = page;
+    });
+    _notifyPositionChanged();
+    _jumpToInitialPage();
+  }
 
-    final pages = usableLines.map((line) => line.pageNumber).toSet();
-    if (pages.length != 1) return null;
+  void _handlePageChanged(int? pageNumber) {
+    if (pageNumber == null || pageNumber <= 0) return;
 
-    final page = pages.first;
-    if (page <= 0 || (_totalPages > 0 && page > _totalPages)) return null;
+    setState(() => _currentPage = pageNumber.clamp(1, _safeTotalPages).toInt());
+    _notifyPositionChanged();
+  }
 
-    return _UsablePdfSelection(
-      page: page,
-      lines: usableLines,
+  void _handlePdfTextSelectionChanged(List<PdfTextRanges> selections) {
+    final generation = ++_selectionGeneration;
+
+    if (selections.isEmpty) {
+      _didReportWeakSelection = false;
+      widget.onSelectionChanged(null);
+      return;
+    }
+
+    if (!mounted || generation != _selectionGeneration) return;
+
+    final selectedText = _normalizedSelectedText(
+      selections.map((selection) => selection.text).join('\n'),
+    );
+    if (selectedText.isEmpty) {
+      _didReportWeakSelection = false;
+      widget.onSelectionChanged(null);
+      return;
+    }
+
+    final pdfSelection = _usablePdfSelection(selections);
+    if (pdfSelection == null) {
+      widget.onSelectionChanged(null);
+      _reportWeakSelection();
+      return;
+    }
+
+    _didReportWeakSelection = false;
+    widget.onSelectionChanged(
+      ReaderSelection(
+        text: selectedText,
+        startIndex: 0,
+        endIndex: selectedText.length,
+        locationRef: _pdfLocationRef(
+          pdfSelection.page,
+          selectedText,
+          pdfSelection.rects,
+        ),
+      ),
     );
   }
 
-  bool _hasUsableBounds(PdfTextLine line) {
-    final bounds = line.bounds;
-    if (!bounds.left.isFinite ||
-        !bounds.top.isFinite ||
-        !bounds.width.isFinite ||
-        !bounds.height.isFinite) {
-      return false;
+  _UsablePdfSelection? _usablePdfSelection(List<PdfTextRanges> selections) {
+    if (selections.isEmpty || !_pdfController.isReady) return null;
+
+    final pages = selections.map((selection) => selection.pageNumber).toSet();
+    if (pages.length != 1) return null;
+
+    final pageNumber = pages.first;
+    if (pageNumber <= 0 || (_totalPages > 0 && pageNumber > _totalPages)) {
+      return null;
     }
 
-    return bounds.width > 0 && bounds.height > 0;
+    final page = _pageByNumber(pageNumber);
+    if (page == null) return null;
+
+    final rects = <Rect>[];
+    for (final selection in selections) {
+      for (final range in selection.ranges) {
+        final fragmentRange = range.toTextRangeWithFragments(selection.pageText);
+        if (fragmentRange == null) continue;
+
+        for (final pdfRect in fragmentRange.enumerateRectsForRange()) {
+          final rect = pdfRect.toRect(page: page);
+          if (_hasUsableBounds(rect)) rects.add(rect);
+        }
+      }
+    }
+
+    if (rects.isEmpty) return null;
+
+    return _UsablePdfSelection(
+      page: pageNumber,
+      rects: List<Rect>.unmodifiable(rects),
+    );
+  }
+
+  PdfPage? _pageByNumber(int pageNumber) {
+    if (!_pdfController.isReady) return null;
+
+    final pageIndex = pageNumber - 1;
+    if (pageIndex < 0 || pageIndex >= _pdfController.pages.length) return null;
+
+    return _pdfController.pages[pageIndex];
+  }
+
+  bool _hasUsableBounds(Rect rect) {
+    return rect.left.isFinite &&
+        rect.top.isFinite &&
+        rect.width.isFinite &&
+        rect.height.isFinite &&
+        rect.width > 0 &&
+        rect.height > 0;
   }
 
   void _reportWeakSelection() {
@@ -338,88 +386,110 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     );
   }
 
-  void _scheduleAnnotationSync() {
-    if (_annotationSyncScheduled) return;
-    _annotationSyncScheduled = true;
-    final generation = ++_annotationSyncGeneration;
+  void _jumpToInitialPage() {
+    if (_didJumpToInitialPage) return;
 
+    final page = widget.initialPage;
+    if (page == null || page <= 0 || _totalPages <= 0) return;
+
+    _didJumpToInitialPage = true;
+    final safePage = page.clamp(1, _totalPages).toInt();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || generation != _annotationSyncGeneration) return;
+      if (!mounted) return;
 
-      _annotationSyncScheduled = false;
-      unawaited(_syncVisibleAnnotations(generation));
+      _jumpToPage(safePage);
     });
   }
 
-  Future<void> _syncVisibleAnnotations(int generation) async {
-    if (!_documentLoaded) return;
+  void _jumpToPage(int page) {
+    if (!_pdfController.isReady || _totalPages <= 0) return;
 
-    final nextAnnotations = <String, ReaderAnnotation>{
-      for (final annotation in widget.annotations)
-        if (annotation.canHighlightText &&
-            annotation.isPdfLocation &&
-            annotation.pdfPageNumber != null)
-          annotation.id: annotation,
-    };
+    final safePage = page.clamp(1, _totalPages).toInt();
+    unawaited(
+      _pdfController.goToPage(
+        pageNumber: safePage,
+        duration: _pageJumpDuration,
+      ),
+    );
+    setState(() => _currentPage = safePage);
+    _notifyPositionChanged();
+  }
 
-    var operationsSinceYield = 0;
-    for (final entry in _visibleAnnotations.entries.toList()) {
-      if (!mounted || generation != _annotationSyncGeneration) return;
+  void _notifyPositionChanged() {
+    widget.onPositionChanged?.call(
+      PdfReaderPosition(
+        currentPage: _currentPage,
+        totalPages: _totalPages,
+      ),
+    );
+  }
 
-      final current = nextAnnotations[entry.key];
-      if (current != null &&
-          _annotationSignature(current) == entry.value.subject) {
+  void _goToPreviousPage() {
+    if (_currentPage <= 1) return;
+
+    _jumpToPage(_currentPage - 1);
+  }
+
+  void _goToNextPage() {
+    if (_totalPages > 0 && _currentPage >= _totalPages) return;
+
+    _jumpToPage(_currentPage + 1);
+  }
+
+  void _clearSelection() {
+    _selectionGeneration++;
+    _didReportWeakSelection = false;
+    widget.onSelectionChanged(null);
+  }
+
+  void _paintSavedHighlights(Canvas canvas, Rect pageRect, PdfPage page) {
+    final highlights = <_PdfSavedHighlight>[];
+    for (final annotation in widget.annotations) {
+      if (!annotation.canHighlightText ||
+          !annotation.isPdfLocation ||
+          annotation.pdfPageNumber != page.pageNumber) {
         continue;
       }
 
-      _controller.removeAnnotation(entry.value);
-      _visibleAnnotations.remove(entry.key);
-      operationsSinceYield++;
-      if (operationsSinceYield >= _annotationSyncBatchSize) {
-        operationsSinceYield = 0;
-        await Future<void>.delayed(Duration.zero);
-      }
+      final rects = _pdfRects(annotation.locationRef);
+      if (rects.isEmpty) continue;
+
+      highlights.add(
+        _PdfSavedHighlight(
+          color: annotationColorById(annotation.colorId),
+          rects: rects,
+        ),
+      );
     }
 
-    for (final annotation in nextAnnotations.values) {
-      if (!mounted || generation != _annotationSyncGeneration) return;
-      if (_visibleAnnotations.containsKey(annotation.id)) continue;
+    if (highlights.isEmpty) return;
 
-      final visibleAnnotation = _highlightAnnotationFor(annotation);
-      if (visibleAnnotation == null) continue;
+    final scaleX = pageRect.width / page.width;
+    final scaleY = pageRect.height / page.height;
+    if (scaleX <= 0 || scaleY <= 0) return;
 
-      _visibleAnnotations[annotation.id] = visibleAnnotation;
-      _controller.addAnnotation(visibleAnnotation);
-      operationsSinceYield++;
-      if (operationsSinceYield >= _annotationSyncBatchSize) {
-        operationsSinceYield = 0;
-        await Future<void>.delayed(Duration.zero);
+    for (final highlight in highlights) {
+      final paint = Paint()
+        ..color = highlight.color.withValues(alpha: 0.32)
+        ..style = PaintingStyle.fill;
+
+      for (final rect in highlight.rects) {
+        final scaledRect = Rect.fromLTWH(
+          pageRect.left + rect.left * scaleX,
+          pageRect.top + rect.top * scaleY,
+          rect.width * scaleX,
+          rect.height * scaleY,
+        );
+        canvas.drawRect(scaledRect, paint);
       }
     }
   }
 
-  HighlightAnnotation? _highlightAnnotationFor(ReaderAnnotation annotation) {
-    final lines = _pdfTextLinesFor(annotation);
-    if (lines.isEmpty) return null;
-
-    final highlight = HighlightAnnotation(textBoundsCollection: lines)
-      ..color = annotationColorById(annotation.colorId)
-      ..opacity = 1
-      ..isLocked = true
-      ..author = 'Qurtix'
-      ..subject = _annotationSignature(annotation);
-
-    return highlight;
-  }
-
-  List<PdfTextLine> _pdfTextLinesFor(ReaderAnnotation annotation) {
-    final page = annotation.pdfPageNumber;
-    if (page == null) return const [];
-
-    final rectsValue = _pdfValue(annotation.locationRef, 'rects');
+  List<Rect> _pdfRects(String locationRef) {
+    final rectsValue = _pdfValue(locationRef, 'rects');
     if (rectsValue == null || rectsValue.isEmpty) return const [];
 
-    final lines = <PdfTextLine>[];
+    final rects = <Rect>[];
     for (final encodedRect in rectsValue.split(',')) {
       final parts = encodedRect.split('_');
       if (parts.length != 4) continue;
@@ -428,29 +498,22 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
       final top = double.tryParse(parts[1]);
       final width = double.tryParse(parts[2]);
       final height = double.tryParse(parts[3]);
-      if (left == null || top == null || width == null || height == null) {
+      if (left == null ||
+          top == null ||
+          width == null ||
+          height == null ||
+          !left.isFinite ||
+          !top.isFinite ||
+          !width.isFinite ||
+          !height.isFinite) {
         continue;
       }
       if (width <= 0 || height <= 0) continue;
 
-      lines.add(
-        PdfTextLine(
-          Rect.fromLTWH(left, top, width, height),
-          annotation.selectedText,
-          page,
-        ),
-      );
+      rects.add(Rect.fromLTWH(left, top, width, height));
     }
 
-    return lines;
-  }
-
-  String _annotationSignature(ReaderAnnotation annotation) {
-    return [
-      annotation.id,
-      annotation.colorId,
-      annotation.locationRef,
-    ].join('|');
+    return List<Rect>.unmodifiable(rects);
   }
 
   String? _pdfValue(String locationRef, String key) {
@@ -470,94 +533,18 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
     return null;
   }
 
-  bool _sameAnnotations(
-    List<ReaderAnnotation> previous,
-    List<ReaderAnnotation> current,
-  ) {
-    if (identical(previous, current)) return true;
-    if (previous.length != current.length) return false;
-
-    for (var i = 0; i < previous.length; i++) {
-      final oldAnnotation = previous[i];
-      final newAnnotation = current[i];
-
-      if (oldAnnotation.id != newAnnotation.id ||
-          oldAnnotation.colorId != newAnnotation.colorId ||
-          oldAnnotation.locationRef != newAnnotation.locationRef ||
-          oldAnnotation.type != newAnnotation.type) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  void _jumpToInitialPage() {
-    if (_didJumpToInitialPage) return;
-
-    final page = widget.initialPage;
-    if (page == null || page <= 0 || _totalPages <= 0) return;
-
-    _didJumpToInitialPage = true;
-    final safePage = page.clamp(1, _totalPages).toInt();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      _controller.jumpToPage(safePage);
-      setState(() => _currentPage = safePage);
-      _notifyPositionChanged();
-    });
-  }
-
-  void _jumpToPage(int page) {
-    if (_totalPages <= 0) return;
-
-    final safePage = page.clamp(1, _totalPages).toInt();
-    _controller.jumpToPage(safePage);
-    setState(() => _currentPage = safePage);
-    _notifyPositionChanged();
-  }
-
-  void _notifyPositionChanged() {
-    widget.onPositionChanged?.call(
-      PdfReaderPosition(
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-      ),
-    );
-  }
-
-  void _goToPreviousPage() {
-    if (_currentPage <= 1) return;
-
-    _controller.previousPage();
-  }
-
-  void _goToNextPage() {
-    if (_totalPages > 0 && _currentPage >= _totalPages) return;
-
-    _controller.nextPage();
-  }
-
-  void _clearSelection() {
-    _controller.clearSelection();
-    _didReportWeakSelection = false;
-    widget.onSelectionChanged(null);
-  }
-
   String _pdfLocationRef(
     int page,
     String selectedText,
-    List<PdfTextLine> selectedLines,
+    List<Rect> selectedRects,
   ) {
-    final rects = selectedLines
-        .map((line) {
-          final bounds = line.bounds;
+    final rects = selectedRects
+        .map((rect) {
           return [
-            bounds.left,
-            bounds.top,
-            bounds.width,
-            bounds.height,
+            rect.left,
+            rect.top,
+            rect.width,
+            rect.height,
           ].map((value) => value.toStringAsFixed(2)).join('_');
         })
         .join(',');
@@ -616,14 +603,24 @@ class _PdfSelectionReaderState extends State<_PdfSelectionReader> {
   }
 }
 
+class _PdfSavedHighlight {
+  const _PdfSavedHighlight({
+    required this.color,
+    required this.rects,
+  });
+
+  final Color color;
+  final List<Rect> rects;
+}
+
 class _UsablePdfSelection {
   const _UsablePdfSelection({
     required this.page,
-    required this.lines,
+    required this.rects,
   });
 
   final int page;
-  final List<PdfTextLine> lines;
+  final List<Rect> rects;
 }
 
 class _PdfPageBar extends StatelessWidget {

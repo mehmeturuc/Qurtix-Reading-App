@@ -61,6 +61,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   bool get _usesTextReader => _sourceType == BookFileType.plainText;
+  bool get _blocksBackForSelection =>
+      _sourceType != BookFileType.pdf && _selection != null;
   bool get _supportsTypographyControls => _sourceType != BookFileType.pdf;
   bool get _supportsTextWidthControls => _sourceType != BookFileType.pdf;
   String get _bookmarkId => 'bookmark:${widget.book.id}';
@@ -132,32 +134,39 @@ class _ReaderScreenState extends State<ReaderScreen> {
           surfaceTintColor: Colors.transparent,
         ),
       ),
-      child: Scaffold(
-        backgroundColor: mode.backgroundColor,
-        appBar: AppBar(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.book.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              Text(
-                widget.book.displayAuthor,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: mode.mutedColor),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              onPressed: _openBookAnnotations,
-              icon: const Icon(Icons.notes_rounded),
-              tooltip: 'Notes and highlights',
+      child: PopScope(
+        canPop: !_blocksBackForSelection,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop && _blocksBackForSelection) {
+            _clearSelection();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: mode.backgroundColor,
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.book.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  widget.book.displayAuthor,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: mode.mutedColor),
+                ),
+              ],
             ),
-            PopupMenuButton<_ReaderOverflowAction>(
+            actions: [
+              IconButton(
+                onPressed: _openBookAnnotations,
+                icon: const Icon(Icons.notes_rounded),
+                tooltip: 'Notes and highlights',
+              ),
+              PopupMenuButton<_ReaderOverflowAction>(
               tooltip: 'Reader options',
               icon: const Icon(Icons.more_vert_rounded),
               onSelected: _handleReaderOverflowAction,
@@ -208,8 +217,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
         body: SafeArea(child: _buildReaderBody(mode)),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildReaderBody(ReaderThemeMode mode) {
     final reader = switch (_sourceType) {
@@ -611,8 +621,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _openControls() {
-    showModalBottomSheet<void>(
+  Future<void> _openControls() async {
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
@@ -653,13 +663,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() => _selection = value);
   }
 
-  void _openHighlightSheet() {
+  Future<void> _openHighlightSheet() async {
     final selection = _selection;
     if (selection == null) return;
 
-    setState(() => _selection = null);
+    _clearSelection();
 
-    showModalBottomSheet<void>(
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
@@ -683,13 +693,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _openAddNoteSheet() {
+  Future<void> _openAddNoteSheet() async {
     final selection = _selection;
     if (selection == null) return;
 
-    setState(() => _selection = null);
+    _clearSelection();
 
-    showModalBottomSheet<void>(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -742,7 +752,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           '${selection.startIndex}:${selection.endIndex}',
     );
     widget.annotationRepository.addAnnotation(annotation);
-    if (_sourceType == BookFileType.pdf) _pdfReaderController.clearSelection();
+    if (_sourceType == BookFileType.pdf) _clearSelection();
     _focusAnnotation(annotation);
     _showAnnotationFeedback(
       type == ReaderAnnotationType.highlight ? 'Highlight saved' : 'Note saved',
@@ -1023,8 +1033,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _openBookAnnotations() {
-    showModalBottomSheet<void>(
+  Future<void> _openBookAnnotations() async {
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
