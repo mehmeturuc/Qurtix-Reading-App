@@ -6,6 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/design/app_design.dart';
 import '../../domain/reader_annotation.dart';
 import 'reader_content.dart';
 
@@ -19,6 +20,7 @@ class EpubReaderView extends StatefulWidget {
     required this.maxWidth,
     required this.focusedAnnotationId,
     required this.onSelectionChanged,
+    required this.selectionResetToken,
     this.controller,
     this.initialAnnotation,
     this.onPositionChanged,
@@ -33,6 +35,7 @@ class EpubReaderView extends StatefulWidget {
   final double maxWidth;
   final String? focusedAnnotationId;
   final ValueChanged<ReaderSelection?> onSelectionChanged;
+  final int selectionResetToken;
   final EpubReaderController? controller;
   final ReaderAnnotation? initialAnnotation;
   final ValueChanged<EpubReaderPosition>? onPositionChanged;
@@ -56,10 +59,7 @@ class EpubReaderController {
 }
 
 class EpubReaderPosition {
-  const EpubReaderPosition({
-    required this.progress,
-    required this.locationRef,
-  });
+  const EpubReaderPosition({required this.progress, required this.locationRef});
 
   final double progress;
   final String locationRef;
@@ -87,10 +87,7 @@ class EpubSourceLocation {
 }
 
 class EpubSourceRange {
-  const EpubSourceRange({
-    required this.start,
-    required this.end,
-  });
+  const EpubSourceRange({required this.start, required this.end});
 
   final EpubSourceLocation start;
   final EpubSourceLocation end;
@@ -105,13 +102,14 @@ class EpubSourceRange {
 
 class _EpubReaderViewState extends State<EpubReaderView> {
   static const _horizontalPadding = 24.0;
-  static const _topPadding = 40.0;
-  static const _bottomPadding = 96.0;
-  static const _chapterSpacing = 32.0;
+  static const _topPadding = 36.0;
+  static const _bottomPadding = 92.0;
+  static const _chapterSpacing = 30.0;
   static const _visibleProbeInset = 72.0;
   static const _anchorContextLength = 48;
   static const _anchorTextLength = 80;
   static const _sameChapterSearchRadius = 5000;
+  static const _scrollAnimationDuration = Duration(milliseconds: 320);
   static const _contextExactScore = 8;
   static const _contextSoftScore = 3;
   static const _contextWeakScore = 1;
@@ -192,11 +190,15 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       future: _document,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return const _DocumentError(message: 'This EPUB file could not be opened.');
+          return const _DocumentError(
+            message: 'This EPUB file could not be opened.',
+          );
         }
 
         final document = snapshot.data;
-        if (document == null) return const Center(child: CircularProgressIndicator());
+        if (document == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
         if (document.isEmpty) {
           return const _DocumentError(
             message: 'This EPUB file does not contain readable text.',
@@ -233,7 +235,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
                       _horizontalPadding,
                       source.index == 0 ? _topPadding : _chapterSpacing,
                       _horizontalPadding,
-                      source.index == document.sources.length - 1 ? _bottomPadding : 0,
+                      source.index == document.sources.length - 1
+                          ? _bottomPadding
+                          : 0,
                     ),
                     child: Align(
                       key: _chapterKeys[source.index],
@@ -247,11 +251,18 @@ class _EpubReaderViewState extends State<EpubReaderView> {
                         maxWidth: widget.maxWidth,
                         textScaler: MediaQuery.textScalerOf(context),
                         focusedAnnotationId: widget.focusedAnnotationId,
+                        selectionResetToken: widget.selectionResetToken,
                         annotationStartOffset: (annotation) {
-                          return _annotationLocalStartForSource(annotation, source);
+                          return _annotationLocalStartForSource(
+                            annotation,
+                            source,
+                          );
                         },
                         annotationEndOffset: (annotation) {
-                          return _annotationLocalEndForSource(annotation, source);
+                          return _annotationLocalEndForSource(
+                            annotation,
+                            source,
+                          );
                         },
                         onSelectionChanged: (selection) {
                           _handleSelectionChanged(source, selection);
@@ -376,7 +387,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   }
 
   void _scheduleInitialAnnotationJump() {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleInitialAnnotation());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleInitialAnnotation(),
+    );
   }
 
   void _handleInitialAnnotation() {
@@ -439,20 +452,26 @@ class _EpubReaderViewState extends State<EpubReaderView> {
 
     final box = targetContext.findRenderObject() as RenderBox?;
     final scrollBox = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize || scrollBox == null || !scrollBox.hasSize) {
+    if (box == null ||
+        !box.hasSize ||
+        scrollBox == null ||
+        !scrollBox.hasSize) {
       return false;
     }
 
     final textWidth = math.min(box.size.width, widget.maxWidth);
     if (textWidth <= 0) return false;
 
-    final localOffset = location.localOffset.clamp(0, source.text.length).toInt();
+    final localOffset = location.localOffset
+        .clamp(0, source.text.length)
+        .toInt();
     final textPainter = _textPainter(source.text, textWidth);
     final caretOffset = textPainter.getOffsetForCaret(
       TextPosition(offset: localOffset),
       Rect.zero,
     );
-    final chapterTop = box.localToGlobal(Offset.zero).dy -
+    final chapterTop =
+        box.localToGlobal(Offset.zero).dy -
         scrollBox.localToGlobal(Offset.zero).dy +
         _scrollController.offset;
     final target = chapterTop + caretOffset.dy - _visibleProbeInset;
@@ -462,7 +481,7 @@ class _EpubReaderViewState extends State<EpubReaderView> {
 
     _scrollController.animateTo(
       safeTarget,
-      duration: const Duration(milliseconds: 360),
+      duration: _scrollAnimationDuration,
       curve: Curves.easeOutCubic,
     );
     _schedulePositionUpdate();
@@ -576,7 +595,10 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     if (anchorText.isEmpty) return true;
     if (localIndex < 0 || localIndex >= source.text.length) return false;
 
-    final anchorEnd = math.min(source.text.length, localIndex + anchorText.length);
+    final anchorEnd = math.min(
+      source.text.length,
+      localIndex + anchorText.length,
+    );
     final actualAnchor = source.text.substring(localIndex, anchorEnd);
     if (actualAnchor == anchorText) return true;
     if (_normalizedAnchor(actualAnchor) != _normalizedAnchor(anchorText)) {
@@ -590,7 +612,8 @@ class _EpubReaderViewState extends State<EpubReaderView> {
           anchorText: actualAnchor,
           prefixText: prefixText,
           suffixText: suffixText,
-        ) > 0;
+        ) >
+        0;
   }
 
   int? _recoverLocalOffsetFromContext({
@@ -602,7 +625,10 @@ class _EpubReaderViewState extends State<EpubReaderView> {
   }) {
     if (anchorText.isEmpty || anchorText.length > 600) return null;
 
-    final searchStart = math.max(0, expectedLocalStart - _sameChapterSearchRadius);
+    final searchStart = math.max(
+      0,
+      expectedLocalStart - _sameChapterSearchRadius,
+    );
     final searchEnd = math.min(
       source.text.length,
       expectedLocalStart + _sameChapterSearchRadius,
@@ -641,7 +667,8 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       );
       final bestDistance = ((bestIndex ?? 1 << 30) - expectedLocalStart).abs();
       if (score > bestScore ||
-          (score == bestScore && (localIndex - expectedLocalStart).abs() < bestDistance)) {
+          (score == bestScore &&
+              (localIndex - expectedLocalStart).abs() < bestDistance)) {
         bestScore = score;
         bestIndex = localIndex;
       }
@@ -662,7 +689,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       final actualPrefix = sourceText.substring(prefixStart, localIndex);
       if (actualPrefix == prefixText) {
         score += _contextExactScore;
-      } else if (_normalizedAnchor(actualPrefix).endsWith(_normalizedAnchor(prefixText))) {
+      } else if (_normalizedAnchor(
+        actualPrefix,
+      ).endsWith(_normalizedAnchor(prefixText))) {
         score += _contextSoftScore;
       } else if (actualPrefix.trimRight().endsWith(prefixText.trim())) {
         score += _contextWeakScore;
@@ -670,11 +699,16 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     }
     if (suffixText.isNotEmpty) {
       final suffixStart = localIndex + anchorText.length;
-      final suffixEnd = math.min(sourceText.length, suffixStart + suffixText.length);
+      final suffixEnd = math.min(
+        sourceText.length,
+        suffixStart + suffixText.length,
+      );
       final actualSuffix = sourceText.substring(suffixStart, suffixEnd);
       if (actualSuffix == suffixText) {
         score += _contextExactScore;
-      } else if (_normalizedAnchor(actualSuffix).startsWith(_normalizedAnchor(suffixText))) {
+      } else if (_normalizedAnchor(
+        actualSuffix,
+      ).startsWith(_normalizedAnchor(suffixText))) {
         score += _contextSoftScore;
       } else if (actualSuffix.trimLeft().startsWith(suffixText.trim())) {
         score += _contextWeakScore;
@@ -698,7 +732,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     final step = math.max(1, anchorText.length ~/ 3);
     for (var index = windowStart; index < windowEnd; index += step) {
       final end = math.min(sourceText.length, index + anchorText.length + 24);
-      final normalizedWindow = _normalizedAnchor(sourceText.substring(index, end));
+      final normalizedWindow = _normalizedAnchor(
+        sourceText.substring(index, end),
+      );
       if (normalizedWindow.startsWith(normalizedNeedle)) candidates.add(index);
     }
     return candidates;
@@ -750,10 +786,7 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     );
 
     widget.onPositionChanged?.call(
-      EpubReaderPosition(
-        progress: progress,
-        locationRef: locationRef,
-      ),
+      EpubReaderPosition(progress: progress, locationRef: locationRef),
     );
   }
 
@@ -777,7 +810,8 @@ class _EpubReaderViewState extends State<EpubReaderView> {
 
     final viewportTop = scrollBox.localToGlobal(Offset.zero).dy;
     final viewportHeight = position.viewportDimension;
-    final probeY = viewportTop + math.min(_visibleProbeInset, viewportHeight * 0.35);
+    final probeY =
+        viewportTop + math.min(_visibleProbeInset, viewportHeight * 0.35);
 
     _EpubChapterSource? closestSource;
     double closestDistance = double.infinity;
@@ -836,7 +870,9 @@ class _EpubReaderViewState extends State<EpubReaderView> {
       text: TextSpan(
         text: text,
         style: TextStyle(
+          fontFamily: AppTypography.serif,
           fontSize: widget.fontSize,
+          fontWeight: FontWeight.w400,
           height: widget.lineHeight,
           letterSpacing: 0,
         ),
@@ -851,10 +887,7 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     final range = _currentVisibleSourceRange();
     if (range == null) return null;
 
-    return _locationRefForRange(
-      range: range,
-      anchorText: _anchorTextAt(range),
-    );
+    return _locationRefForRange(range: range, anchorText: _anchorTextAt(range));
   }
 
   String _locationRefForRange({
@@ -865,9 +898,14 @@ class _EpubReaderViewState extends State<EpubReaderView> {
     final source = document?.sourceAtIndex(range.sourceIndex);
     final sourceText = source?.text ?? '';
     final safeLocalStart = range.localStart.clamp(0, sourceText.length).toInt();
-    final safeLocalEnd = range.localEnd.clamp(safeLocalStart, sourceText.length).toInt();
+    final safeLocalEnd = range.localEnd
+        .clamp(safeLocalStart, sourceText.length)
+        .toInt();
     final prefixStart = math.max(0, safeLocalStart - _anchorContextLength);
-    final suffixEnd = math.min(sourceText.length, safeLocalEnd + _anchorContextLength);
+    final suffixEnd = math.min(
+      sourceText.length,
+      safeLocalEnd + _anchorContextLength,
+    );
     final sourceLength = document?.textLength ?? 0;
     final progress = _progressForRange(range);
 
@@ -946,7 +984,10 @@ _EpubSourceModel _extractEpubDocumentFromBytes(List<int> bytes) {
   return _EpubSourceModel(sources: sources);
 }
 
-List<String> _orderedHtmlPaths(Map<String, ArchiveFile> files, Set<String> htmlPaths) {
+List<String> _orderedHtmlPaths(
+  Map<String, ArchiveFile> files,
+  Set<String> htmlPaths,
+) {
   final opfPath = _packagePath(files);
   if (opfPath == null) return const [];
   final opfContent = files[opfPath]?.content;
@@ -956,7 +997,10 @@ List<String> _orderedHtmlPaths(Map<String, ArchiveFile> files, Set<String> htmlP
   final packageDir = _dirname(opfPath);
   final manifest = <String, String>{};
 
-  for (final match in RegExp(r'<item\b[^>]*>', caseSensitive: false).allMatches(opf)) {
+  for (final match in RegExp(
+    r'<item\b[^>]*>',
+    caseSensitive: false,
+  ).allMatches(opf)) {
     final tag = match.group(0) ?? '';
     final id = _xmlAttribute(tag, 'id');
     final href = _xmlAttribute(tag, 'href');
@@ -966,7 +1010,10 @@ List<String> _orderedHtmlPaths(Map<String, ArchiveFile> files, Set<String> htmlP
   }
 
   final ordered = <String>[];
-  for (final match in RegExp(r'<itemref\b[^>]*>', caseSensitive: false).allMatches(opf)) {
+  for (final match in RegExp(
+    r'<itemref\b[^>]*>',
+    caseSensitive: false,
+  ).allMatches(opf)) {
     final idref = _xmlAttribute(match.group(0) ?? '', 'idref');
     final path = idref == null ? null : manifest[idref];
     if (path != null && htmlPaths.contains(path)) ordered.add(path);
@@ -1033,17 +1080,24 @@ String _plainTextFromHtml(String html) {
       .replaceAll(RegExp(r'<(script|style)[^>]*>.*?</\1>', dotAll: true), '')
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
       .replaceAll(
-        RegExp(r'</(p|div|h[1-6]|li|section|article|chapter)>', caseSensitive: false),
+        RegExp(
+          r'</(p|div|h[1-6]|li|section|article|chapter)>',
+          caseSensitive: false,
+        ),
         '\n',
       )
       .replaceAll(RegExp(r'<[^>]+>'), ' ')
       .replaceAllMapped(RegExp(r'&#(\d+);'), (match) {
         final codePoint = int.tryParse(match.group(1) ?? '');
-        return codePoint == null ? match.group(0) ?? '' : String.fromCharCode(codePoint);
+        return codePoint == null
+            ? match.group(0) ?? ''
+            : String.fromCharCode(codePoint);
       })
       .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (match) {
         final codePoint = int.tryParse(match.group(1) ?? '', radix: 16);
-        return codePoint == null ? match.group(0) ?? '' : String.fromCharCode(codePoint);
+        return codePoint == null
+            ? match.group(0) ?? ''
+            : String.fromCharCode(codePoint);
       })
       .replaceAll('&nbsp;', ' ')
       .replaceAll('&amp;', '&')
@@ -1102,8 +1156,8 @@ class _EpubSourceModel {
     final clamped = progress.isFinite
         ? progress.clamp(0.0, 1.0).toDouble()
         : progress.isNegative
-            ? 0.0
-            : 1.0;
+        ? 0.0
+        : 1.0;
     final sourceOffset = clamped >= 1.0
         ? textLength
         : (textLength * clamped).floor().clamp(0, textLength).toInt();
@@ -1130,7 +1184,8 @@ class _EpubSourceModel {
 
       final sourceEndOffset = source.bookStartOffset + source.text.length;
       final isLastSource = index == sources.length - 1;
-      if (safeOffset < sourceEndOffset || (isLastSource && safeOffset <= sourceEndOffset)) {
+      if (safeOffset < sourceEndOffset ||
+          (isLastSource && safeOffset <= sourceEndOffset)) {
         return _ResolvedEpubSourceLocation(
           source: source,
           localOffset: (safeOffset - source.bookStartOffset)
@@ -1143,7 +1198,10 @@ class _EpubSourceModel {
     }
 
     final last = sources.last;
-    return _ResolvedEpubSourceLocation(source: last, localOffset: last.text.length);
+    return _ResolvedEpubSourceLocation(
+      source: last,
+      localOffset: last.text.length,
+    );
   }
 
   double progressForSourceLocation({

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../../../core/design/app_design.dart';
 import '../../domain/annotation_color.dart';
 import '../../domain/reader_annotation.dart';
 import 'reader_content.dart';
@@ -18,6 +20,7 @@ class PdfReaderView extends StatelessWidget {
     required this.onSelectionChanged,
     this.controller,
     this.initialPage,
+    this.isSelectionActive = false,
     this.onPositionChanged,
     this.onSelectionFailure,
     super.key,
@@ -29,6 +32,7 @@ class PdfReaderView extends StatelessWidget {
   final ValueChanged<ReaderSelection?> onSelectionChanged;
   final PdfReaderController? controller;
   final int? initialPage;
+  final bool isSelectionActive;
   final ValueChanged<PdfReaderPosition>? onPositionChanged;
   final ValueChanged<String>? onSelectionFailure;
 
@@ -48,6 +52,7 @@ class PdfReaderView extends StatelessWidget {
         annotations: annotations,
         controller: controller,
         initialPage: initialPage,
+        isSelectionActive: isSelectionActive,
         surfaceColor: surfaceColor,
         onPositionChanged: onPositionChanged,
         onSelectionChanged: onSelectionChanged,
@@ -58,10 +63,10 @@ class PdfReaderView extends StatelessWidget {
 
   Color get _pdfSurfaceColor {
     if (backgroundColor.computeLuminance() < 0.18) {
-      return const Color(0xFF191A18);
+      return const Color(0xFF181917);
     }
 
-    return const Color(0xFFF4F3EF);
+    return const Color(0xFFF6F5F1);
   }
 }
 
@@ -109,6 +114,7 @@ class _PdfrxSelectionReader extends StatefulWidget {
     required this.annotations,
     required this.controller,
     required this.initialPage,
+    required this.isSelectionActive,
     required this.surfaceColor,
     required this.onSelectionChanged,
     required this.onPositionChanged,
@@ -119,6 +125,7 @@ class _PdfrxSelectionReader extends StatefulWidget {
   final List<ReaderAnnotation> annotations;
   final PdfReaderController? controller;
   final int? initialPage;
+  final bool isSelectionActive;
   final Color surfaceColor;
   final ValueChanged<ReaderSelection?> onSelectionChanged;
   final ValueChanged<PdfReaderPosition>? onPositionChanged;
@@ -129,8 +136,8 @@ class _PdfrxSelectionReader extends StatefulWidget {
 }
 
 class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
-  static const double _documentPageSpacing = 12;
-  static const Duration _pageJumpDuration = Duration(milliseconds: 220);
+  static const double _documentPageSpacing = 16;
+  static const Duration _pageJumpDuration = Duration(milliseconds: 260);
 
   late final PdfViewerController _pdfController = PdfViewerController();
 
@@ -182,39 +189,60 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     return Stack(
       children: [
         Positioned.fill(
-          child: PdfViewer.file(
-            widget.file.path,
-            controller: _pdfController,
-            initialPageNumber: _initialPageNumber,
-            params: PdfViewerParams(
-              margin: _documentPageSpacing,
-              backgroundColor: widget.surfaceColor,
-              pageDropShadow: null,
-              scrollHorizontallyByMouseWheel: true,
-              layoutPages: _horizontalPageLayout,
-              enableTextSelection: true,
-              onTextSelectionChange: _handlePdfTextSelectionChanged,
-              onViewerReady: _handleViewerReady,
-              onPageChanged: _handlePageChanged,
-              pagePaintCallbacks: [_paintSavedHighlights],
+          child: DefaultSelectionStyle(
+            selectionColor: annotationColorById(
+              'yellow',
+            ).withValues(alpha: 0.20),
+            cursorColor: Theme.of(context).colorScheme.primary,
+            child: PdfViewer.file(
+              widget.file.path,
+              controller: _pdfController,
+              initialPageNumber: _initialPageNumber,
+              params: PdfViewerParams(
+                margin: _documentPageSpacing,
+                backgroundColor: widget.surfaceColor,
+                pageDropShadow: null,
+                scrollHorizontallyByMouseWheel: true,
+                layoutPages: _horizontalPageLayout,
+                enableTextSelection: true,
+                onTextSelectionChange: _handlePdfTextSelectionChanged,
+                onViewerReady: _handleViewerReady,
+                onPageChanged: _handlePageChanged,
+                pagePaintCallbacks: [_paintSavedHighlights],
+              ),
             ),
           ),
         ),
         Positioned(
           left: 16,
           right: 16,
-          bottom: 16,
+          bottom: 14,
           child: SafeArea(
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: _PdfPageBar(
-                currentPage: _currentPage,
-                totalPages: _totalPages,
-                canGoBack: _currentPage > 1,
-                canGoForward:
-                    _totalPages > 0 && _currentPage < _totalPages,
-                onPrevious: _goToPreviousPage,
-                onNext: _goToNextPage,
+            child: AnimatedSlide(
+              offset: widget.isSelectionActive
+                  ? const Offset(0, 0.36)
+                  : Offset.zero,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              child: AnimatedOpacity(
+                opacity: widget.isSelectionActive ? 0 : 1,
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOutCubic,
+                child: IgnorePointer(
+                  ignoring: widget.isSelectionActive,
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _PdfPageBar(
+                      currentPage: _currentPage,
+                      totalPages: _totalPages,
+                      canGoBack: _currentPage > 1,
+                      canGoForward:
+                          _totalPages > 0 && _currentPage < _totalPages,
+                      onPrevious: _goToPreviousPage,
+                      onNext: _goToNextPage,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -227,21 +255,18 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     List<PdfPage> pages,
     PdfViewerParams params,
   ) {
-    final height = pages.fold<double>(
-      0,
-      (previous, page) => math.max(previous, page.height),
-    ) + params.margin * 2;
+    final height =
+        pages.fold<double>(
+          0,
+          (previous, page) => math.max(previous, page.height),
+        ) +
+        params.margin * 2;
     final pageLayouts = <Rect>[];
     var x = params.margin;
 
     for (final page in pages) {
       pageLayouts.add(
-        Rect.fromLTWH(
-          x,
-          (height - page.height) / 2,
-          page.width,
-          page.height,
-        ),
+        Rect.fromLTWH(x, (height - page.height) / 2, page.width, page.height),
       );
       x += page.width + params.margin;
     }
@@ -261,7 +286,10 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     return page;
   }
 
-  void _handleViewerReady(PdfDocument document, PdfViewerController controller) {
+  void _handleViewerReady(
+    PdfDocument document,
+    PdfViewerController controller,
+  ) {
     final pageCount = document.pages.length;
     final page = (controller.pageNumber ?? _initialPageNumber)
         .clamp(1, pageCount <= 0 ? 1 : pageCount)
@@ -341,7 +369,9 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     final rects = <Rect>[];
     for (final selection in selections) {
       for (final range in selection.ranges) {
-        final fragmentRange = range.toTextRangeWithFragments(selection.pageText);
+        final fragmentRange = range.toTextRangeWithFragments(
+          selection.pageText,
+        );
         if (fragmentRange == null) continue;
 
         for (final pdfRect in fragmentRange.enumerateRectsForRange()) {
@@ -417,10 +447,7 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
 
   void _notifyPositionChanged() {
     widget.onPositionChanged?.call(
-      PdfReaderPosition(
-        currentPage: _currentPage,
-        totalPages: _totalPages,
-      ),
+      PdfReaderPosition(currentPage: _currentPage, totalPages: _totalPages),
     );
   }
 
@@ -470,7 +497,7 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
 
     for (final highlight in highlights) {
       final paint = Paint()
-        ..color = highlight.color.withValues(alpha: 0.32)
+        ..color = highlight.color.withValues(alpha: 0.20)
         ..style = PaintingStyle.fill;
 
       for (final rect in highlight.rects) {
@@ -604,20 +631,14 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
 }
 
 class _PdfSavedHighlight {
-  const _PdfSavedHighlight({
-    required this.color,
-    required this.rects,
-  });
+  const _PdfSavedHighlight({required this.color, required this.rects});
 
   final Color color;
   final List<Rect> rects;
 }
 
 class _UsablePdfSelection {
-  const _UsablePdfSelection({
-    required this.page,
-    required this.rects,
-  });
+  const _UsablePdfSelection({required this.page, required this.rects});
 
   final int page;
   final List<Rect> rects;
@@ -646,58 +667,63 @@ class _PdfPageBar extends StatelessWidget {
     final colors = theme.colorScheme;
     final isDark = colors.brightness == Brightness.dark;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.surface.withValues(alpha: isDark ? 0.88 : 0.90),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colors.outlineVariant.withValues(alpha: isDark ? 0.34 : 0.48),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.07),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              onPressed: canGoBack ? onPrevious : null,
-              icon: const Icon(Icons.keyboard_arrow_left_rounded),
-              tooltip: 'Previous page',
-              iconSize: 22,
-              visualDensity: VisualDensity.compact,
-            ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeOutCubic,
-              child: Padding(
-                key: ValueKey('$currentPage-$totalPages'),
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(
-                  _pageLabel,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: colors.onSurface.withValues(alpha: 0.72),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0,
-                  ),
-                ),
+    return ClipRRect(
+      borderRadius: AppCorners.pill,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.surface.withValues(alpha: isDark ? 0.72 : 0.76),
+            borderRadius: AppCorners.pill,
+            border: Border.all(
+              color: colors.outlineVariant.withValues(
+                alpha: isDark ? 0.16 : 0.18,
               ),
             ),
-            IconButton(
-              onPressed: canGoForward ? onNext : null,
-              icon: const Icon(Icons.keyboard_arrow_right_rounded),
-              tooltip: 'Next page',
-              iconSize: 22,
-              visualDensity: VisualDensity.compact,
+            boxShadow: [
+              BoxShadow(
+                color: colors.onSurface.withValues(alpha: 0.035),
+                blurRadius: 22,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PdfPageButton(
+                  onPressed: canGoBack ? onPrevious : null,
+                  icon: Icons.keyboard_arrow_left_rounded,
+                  tooltip: 'Previous page',
+                ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeOutCubic,
+                  child: Padding(
+                    key: ValueKey('$currentPage-$totalPages'),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      _pageLabel,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontFamily: AppTypography.sans,
+                        color: colors.onSurface.withValues(alpha: 0.60),
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                ),
+                _PdfPageButton(
+                  onPressed: canGoForward ? onNext : null,
+                  icon: Icons.keyboard_arrow_right_rounded,
+                  tooltip: 'Next page',
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -707,6 +733,40 @@ class _PdfPageBar extends StatelessWidget {
     if (totalPages <= 0) return 'Page $currentPage';
 
     return '$currentPage / $totalPages';
+  }
+}
+
+class _PdfPageButton extends StatelessWidget {
+  const _PdfPageButton({
+    required this.onPressed,
+    required this.icon,
+    required this.tooltip,
+  });
+
+  final VoidCallback? onPressed;
+  final IconData icon;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      tooltip: tooltip,
+      iconSize: 19,
+      visualDensity: VisualDensity.compact,
+      style: IconButton.styleFrom(
+        foregroundColor: colors.onSurface.withValues(alpha: 0.64),
+        disabledForegroundColor: colors.onSurface.withValues(alpha: 0.22),
+        backgroundColor: colors.onSurface.withValues(alpha: 0.026),
+        disabledBackgroundColor: Colors.transparent,
+        minimumSize: const Size.square(32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: const CircleBorder(),
+      ),
+    );
   }
 }
 

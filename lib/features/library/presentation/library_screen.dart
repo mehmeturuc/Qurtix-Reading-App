@@ -35,6 +35,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final allBooks = widget.bookRepository.getBooks();
     final collectionByBookId = _collectionMapFor(allBooks);
     final books = _filteredBooks(allBooks, collectionByBookId);
@@ -65,12 +67,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: AppPage(
           child: Column(
             children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.x5,
+                  0,
+                  AppSpacing.x6,
+                  AppSpacing.x1,
+                ),
+                child: _LibraryHeader(
+                  visibleCount: books.length,
+                  totalCount: allBooks.length,
+                  collectionCount: collections.length,
+                  selectedCollection: _selectedCollection,
+                  isImporting: _isImporting,
+                  onImport: _importBook,
+                ),
+              ),
               if (collections.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                     AppSpacing.x5,
-                    AppSpacing.x4,
-                    AppSpacing.x5,
+                    AppSpacing.x1,
+                    AppSpacing.x6,
                     0,
                   ),
                   child: Align(
@@ -79,17 +97,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       spacing: AppSpacing.x2,
                       runSpacing: AppSpacing.x2,
                       children: [
-                        ChoiceChip(
+                        AppFilterChip(
                           selected: _selectedCollection == null,
-                          label: const Text('All'),
+                          label: 'All',
                           onSelected: (_) {
                             setState(() => _selectedCollection = null);
                           },
                         ),
                         for (final collection in collections)
-                          ChoiceChip(
+                          AppFilterChip(
                             selected: _selectedCollection == collection,
-                            label: Text(collection),
+                            label: collection,
                             onSelected: (_) {
                               setState(() => _selectedCollection = collection);
                             },
@@ -109,11 +127,47 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       columns: columns,
                     );
 
+                    if (books.isEmpty) {
+                      return Center(
+                        child: AppSection(
+                          padding: const EdgeInsets.all(AppSpacing.x8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.menu_book_outlined,
+                                color: colors.secondary,
+                                size: 36,
+                              ),
+                              const SizedBox(height: AppSpacing.x4),
+                              Text(
+                                _selectedCollection == null
+                                    ? 'Your shelf is ready'
+                                    : 'No books in this folder',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: AppSpacing.x2),
+                              Text(
+                                _selectedCollection == null
+                                    ? 'Import a PDF or EPUB to begin.'
+                                    : 'Move a book here from its menu.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
                     return GridView.builder(
                       padding: const EdgeInsets.fromLTRB(
                         AppSpacing.x5,
-                        AppSpacing.x4,
-                        AppSpacing.x5,
+                        AppSpacing.x2,
+                        AppSpacing.x6,
                         28,
                       ),
                       itemCount: books.length,
@@ -153,11 +207,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  double _bookCardExtent({
-    required double width,
-    required int columns,
-  }) {
-    const horizontalPadding = 40.0;
+  double _bookCardExtent({required double width, required int columns}) {
+    const horizontalPadding = AppSpacing.x5 + AppSpacing.x6;
     const crossAxisSpacing = AppSpacing.x4;
     final totalSpacing = crossAxisSpacing * (columns - 1);
     final tileWidth = (width - horizontalPadding - totalSpacing) / columns;
@@ -219,9 +270,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       widget.bookRepository.addBook(book);
       setState(() {});
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported ${book.title}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Imported ${book.title}')));
     } catch (_) {
       if (!mounted) return;
 
@@ -237,9 +288,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     widget.bookRepository.markOpened(book.id, DateTime.now());
     setState(() {});
 
-    Navigator.of(
-      context,
-    ).push(
+    Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ReaderScreen(
           book: book,
@@ -271,9 +320,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (value.isEmpty) {
         widget.listRepository.setBookCollection(book.id, null);
       } else {
-        final exists = widget.listRepository
-            .getLists()
-            .any((list) => list.name.trim() == value);
+        final exists = widget.listRepository.getLists().any(
+          (list) => list.name.trim() == value,
+        );
         if (!exists) {
           widget.listRepository.addList(
             CustomList(
@@ -355,8 +404,139 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (!mounted) return;
     _refreshLibraryState();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Deleted ${book.title}')),
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Deleted ${book.title}')));
+  }
+}
+
+class _LibraryHeader extends StatelessWidget {
+  const _LibraryHeader({
+    required this.visibleCount,
+    required this.totalCount,
+    required this.collectionCount,
+    required this.selectedCollection,
+    required this.isImporting,
+    required this.onImport,
+  });
+
+  final int visibleCount;
+  final int totalCount;
+  final int collectionCount;
+  final String? selectedCollection;
+  final bool isImporting;
+  final VoidCallback onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final title = selectedCollection ?? 'Curated shelf';
+    final countLabel = selectedCollection == null
+        ? '$totalCount books'
+        : '$visibleCount of $totalCount books';
+
+    return AppSection(
+      backgroundColor: colors.surfaceContainerLow,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.x4,
+        AppSpacing.x3,
+        AppSpacing.x4,
+        AppSpacing.x2,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isCompact = constraints.maxWidth < 560;
+          final copy = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: isCompact
+                    ? theme.textTheme.titleMedium?.copyWith(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      )
+                    : theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+              ),
+              SizedBox(height: isCompact ? AppSpacing.x1 : AppSpacing.x2),
+              Wrap(
+                spacing: AppSpacing.x2,
+                runSpacing: AppSpacing.x1,
+                children: [
+                  AppPill(
+                    backgroundColor: colors.surfaceContainerLowest,
+                    foregroundColor: colors.onSurfaceVariant,
+                    child: Text(countLabel, style: theme.textTheme.labelSmall),
+                  ),
+                  AppPill(
+                    backgroundColor: colors.secondaryContainer,
+                    foregroundColor: colors.onSecondaryContainer,
+                    child: Text(
+                      '$collectionCount folders',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+          final button = DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: AppGradients.primarySatin,
+              borderRadius: AppCorners.pill,
+            ),
+            child: FilledButton.icon(
+              onPressed: isImporting ? null : onImport,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                disabledBackgroundColor: Colors.transparent,
+                shadowColor: Colors.transparent,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.x3,
+                  vertical: AppSpacing.x2,
+                ),
+                minimumSize: const Size(0, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: isImporting
+                  ? SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onPrimary,
+                      ),
+                    )
+                  : const Icon(Icons.upload_file_rounded),
+              label: const Text('Import'),
+            ),
+          );
+
+          if (isCompact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                copy,
+                const SizedBox(height: AppSpacing.x3),
+                button,
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: copy),
+              const SizedBox(width: AppSpacing.x4),
+              button,
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -457,10 +637,7 @@ class _OrganizeBookDialogState extends State<_OrganizeBookDialog> {
           },
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: _save,
-          child: const Text('Save'),
-        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
       ],
     );
   }

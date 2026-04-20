@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/design/app_design.dart';
 import '../../domain/annotation_color.dart';
 import '../../domain/reader_annotation.dart';
 
@@ -33,6 +34,7 @@ class ReaderContent extends StatefulWidget {
     this.locationOffsetToRenderedOffset,
     this.renderedOffsetToLocationOffset,
     this.textScaler,
+    this.selectionResetToken = 0,
     super.key,
   });
 
@@ -50,6 +52,7 @@ class ReaderContent extends StatefulWidget {
   final int? Function(int locationOffset)? locationOffsetToRenderedOffset;
   final int Function(int renderedOffset)? renderedOffsetToLocationOffset;
   final TextScaler? textScaler;
+  final int selectionResetToken;
 
   @override
   State<ReaderContent> createState() => _ReaderContentState();
@@ -76,6 +79,7 @@ class _ReaderContentState extends State<ReaderContent> {
         oldWidget.locationOffsetToRenderedOffset !=
             widget.locationOffsetToRenderedOffset ||
         oldWidget.textScaler != widget.textScaler ||
+        oldWidget.selectionResetToken != widget.selectionResetToken ||
         !_sameAnnotations(oldWidget.annotations, widget.annotations)) {
       _spans = _buildTextSpans();
     }
@@ -87,29 +91,36 @@ class _ReaderContentState extends State<ReaderContent> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: widget.maxWidth),
-        child: SelectableText.rich(
-          TextSpan(children: _spans),
-          onSelectionChanged: (selection, cause) {
-            if (selection.isCollapsed) {
-              widget.onSelectionChanged(null);
-              return;
-            }
+        child: DefaultSelectionStyle(
+          selectionColor: annotationColorById('yellow').withValues(alpha: 0.28),
+          cursorColor: widget.textColor.withValues(alpha: 0.72),
+          child: SelectableText.rich(
+            key: ValueKey(widget.selectionResetToken),
+            TextSpan(children: _spans),
+            onSelectionChanged: (selection, cause) {
+              if (selection.isCollapsed) {
+                widget.onSelectionChanged(null);
+                return;
+              }
 
-            final range = _trimmedSelection(selection);
-            if (range == null) {
-              widget.onSelectionChanged(null);
-              return;
-            }
+              final range = _trimmedSelection(selection);
+              if (range == null) {
+                widget.onSelectionChanged(null);
+                return;
+              }
 
-            widget.onSelectionChanged(range);
-          },
-          textAlign: TextAlign.start,
-          textScaler: widget.textScaler,
-          style: TextStyle(
-            color: widget.textColor,
-            fontSize: widget.fontSize,
-            height: widget.lineHeight,
-            letterSpacing: 0,
+              widget.onSelectionChanged(range);
+            },
+            textAlign: TextAlign.start,
+            textScaler: widget.textScaler,
+            style: TextStyle(
+              color: widget.textColor,
+              fontFamily: AppTypography.serif,
+              fontSize: widget.fontSize,
+              fontWeight: FontWeight.w400,
+              height: widget.lineHeight,
+              letterSpacing: 0,
+            ),
           ),
         ),
       ),
@@ -152,10 +163,10 @@ class _ReaderContentState extends State<ReaderContent> {
     final isFocused = annotation.id == widget.focusedAnnotationId;
 
     return TextStyle(
-      backgroundColor: color.withValues(alpha: isFocused ? 0.58 : 0.34),
+      backgroundColor: color.withValues(alpha: isFocused ? 0.48 : 0.26),
       decoration: isFocused ? TextDecoration.underline : TextDecoration.none,
       decorationColor: color,
-      decorationThickness: 2,
+      decorationThickness: 1.6,
     );
   }
 
@@ -244,7 +255,9 @@ class _ReaderContentState extends State<ReaderContent> {
   }
 
   ReaderSelection? _trimmedSelection(TextSelection selection) {
-    var start = selection.start < selection.end ? selection.start : selection.end;
+    var start = selection.start < selection.end
+        ? selection.start
+        : selection.end;
     var end = selection.start < selection.end ? selection.end : selection.start;
 
     start = start.clamp(0, widget.text.length).toInt();
@@ -260,9 +273,11 @@ class _ReaderContentState extends State<ReaderContent> {
 
     if (start >= end) return null;
 
-    final startIndex = widget.renderedOffsetToLocationOffset?.call(start) ??
+    final startIndex =
+        widget.renderedOffsetToLocationOffset?.call(start) ??
         widget.indexOffset + start;
-    final endIndex = widget.renderedOffsetToLocationOffset?.call(end) ??
+    final endIndex =
+        widget.renderedOffsetToLocationOffset?.call(end) ??
         widget.indexOffset + end;
 
     return ReaderSelection(
@@ -311,23 +326,22 @@ class _AnnotationRange {
     ReaderAnnotation annotation,
     int textLength,
     int indexOffset,
-    int order,
-    {
+    int order, {
     int? Function(ReaderAnnotation annotation)? annotationStartOffset,
     int? Function(ReaderAnnotation annotation)? annotationEndOffset,
     int? Function(int locationOffset)? locationOffsetToRenderedOffset,
-  }
-  ) {
-    final start = annotationStartOffset?.call(annotation) ??
+  }) {
+    final start =
+        annotationStartOffset?.call(annotation) ??
         annotation.locationStartIndex;
-    final end = annotationEndOffset?.call(annotation) ??
-        annotation.locationEndIndex;
+    final end =
+        annotationEndOffset?.call(annotation) ?? annotation.locationEndIndex;
     if (start == null || end == null) return null;
 
-    final localStart = locationOffsetToRenderedOffset?.call(start) ??
-        start - indexOffset;
-    final localEnd = locationOffsetToRenderedOffset?.call(end) ??
-        end - indexOffset;
+    final localStart =
+        locationOffsetToRenderedOffset?.call(start) ?? start - indexOffset;
+    final localEnd =
+        locationOffsetToRenderedOffset?.call(end) ?? end - indexOffset;
     if (localEnd <= 0 || localStart >= textLength) return null;
 
     final clampedStart = localStart.clamp(0, textLength).toInt();

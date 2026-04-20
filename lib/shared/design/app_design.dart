@@ -1,47 +1,17 @@
 import 'package:flutter/material.dart';
 
-class AppSpacing {
-  const AppSpacing._();
+import '../../core/design/app_design.dart';
 
-  static const double x1 = 4;
-  static const double x2 = 8;
-  static const double x3 = 12;
-  static const double x4 = 16;
-  static const double x5 = 20;
-  static const double x6 = 24;
-}
-
-class AppRadius {
-  const AppRadius._();
-
-  static const double sm = 8;
-  static const double md = 10;
-  static const double lg = 12;
-  static const double xl = 16;
-}
-
-class AppCorners {
-  const AppCorners._();
-
-  static BorderRadius get sm => BorderRadius.circular(AppRadius.sm);
-  static BorderRadius get md => BorderRadius.circular(AppRadius.md);
-  static BorderRadius get lg => BorderRadius.circular(AppRadius.lg);
-  static BorderRadius get xl => BorderRadius.circular(AppRadius.xl);
-}
-
-class AppBorders {
-  const AppBorders._();
-
-  static BorderSide subtle(ColorScheme colors) {
-    return BorderSide(color: colors.outlineVariant.withValues(alpha: 0.72));
-  }
-}
+export '../../core/design/app_design.dart';
+export '../../core/widgets/app_card.dart';
+export '../../core/widgets/app_chip.dart';
+export '../../core/widgets/app_glass_container.dart';
+export '../../core/widgets/app_pill.dart';
+export '../../core/widgets/app_secondary_button.dart';
+export '../../core/widgets/app_section.dart';
 
 class AppSegmentedOption<T> {
-  const AppSegmentedOption({
-    required this.value,
-    required this.label,
-  });
+  const AppSegmentedOption({required this.value, required this.label});
 
   final T value;
   final String label;

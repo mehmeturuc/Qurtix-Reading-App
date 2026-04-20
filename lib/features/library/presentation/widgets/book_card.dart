@@ -22,9 +22,9 @@ class BookCard extends StatelessWidget {
   static const double horizontalPadding = AppSpacing.x3;
   static const double verticalPadding = AppSpacing.x3;
   static const double coverAspectRatio = 3 / 4;
-  static const double sectionGap = AppSpacing.x2;
-  static const double titleHeight = 40;
-  static const double collectionHeight = 18;
+  static const double sectionGap = AppSpacing.x3;
+  static const double titleHeight = 44;
+  static const double collectionHeight = 22;
 
   static double heightForWidth(double width) {
     final coverWidth = width - (horizontalPadding * 2);
@@ -46,77 +46,69 @@ class BookCard extends StatelessWidget {
     return Semantics(
       button: true,
       label: '${book.title} by ${book.displayAuthor}',
-      child: Material(
-        color: colors.surface,
-        borderRadius: AppCorners.lg,
-        elevation: 2,
-        shadowColor: colors.shadow.withValues(alpha: 0.16),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: AppCorners.lg,
-              border: Border.all(color: AppBorders.subtle(colors).color),
+      child: AppCard(
+        onTap: onTap,
+        padding: const EdgeInsets.all(verticalPadding),
+        backgroundColor: colors.surfaceContainerLowest,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: coverAspectRatio,
+                  child: _BookCover(
+                    book: book,
+                    color: _coverColor(book.coverPath, colors),
+                    icon: _iconFor(book.sourceType),
+                  ),
+                ),
+                Positioned(
+                  top: AppSpacing.x2,
+                  right: AppSpacing.x2,
+                  child: _BookActionsButton(
+                    onSelected: onActionSelected,
+                    showRemoveFromCollection: collectionName != null,
+                  ),
+                ),
+              ],
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(verticalPadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Stack(
-                    children: [
-                      AspectRatio(
-                        aspectRatio: coverAspectRatio,
-                        child: _BookCover(
-                          book: book,
-                          color: _coverColor(book.coverPath, colors),
-                          icon: _iconFor(book.sourceType),
-                        ),
-                      ),
-                      Positioned(
-                        top: AppSpacing.x1,
-                        right: AppSpacing.x1,
-                        child: _BookActionsButton(
-                          onSelected: onActionSelected,
-                          showRemoveFromCollection: collectionName != null,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: sectionGap),
-                  SizedBox(
-                    height: titleHeight,
-                    child: Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        height: 1.18,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: sectionGap),
-                  SizedBox(
-                    height: collectionHeight,
-                    child: Text(
-                      collectionName ?? 'Unsorted',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: collectionName == null
-                            ? colors.onSurfaceVariant
-                            : colors.primary,
-                        fontWeight: FontWeight.w800,
-                        height: 1.1,
-                      ),
-                    ),
-                  ),
-                ],
+            const SizedBox(height: sectionGap),
+            SizedBox(
+              height: titleHeight,
+              child: Text(
+                book.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
+                  height: 1.18,
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: sectionGap),
+            SizedBox(
+              height: collectionHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: AppPill(
+                  backgroundColor: collectionName == null
+                      ? colors.surfaceContainerLow
+                      : colors.secondaryContainer,
+                  foregroundColor: collectionName == null
+                      ? colors.onSurfaceVariant
+                      : colors.onSecondaryContainer,
+                  child: Text(
+                    collectionName ?? 'Unsorted',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -156,18 +148,15 @@ class _BookActionsButton extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
 
     return Material(
-      color: colors.surface.withValues(alpha: 0.92),
-      borderRadius: AppCorners.sm,
+      color: colors.surface.withValues(alpha: 0.72),
+      borderRadius: AppCorners.pill,
       clipBehavior: Clip.antiAlias,
       child: SizedBox.square(
-        dimension: 32,
+        dimension: 34,
         child: PopupMenuButton<BookCardAction>(
           tooltip: 'Book actions',
           padding: EdgeInsets.zero,
-          icon: Icon(
-            Icons.more_horiz_rounded,
-            color: colors.onSurfaceVariant,
-          ),
+          icon: Icon(Icons.more_horiz_rounded, color: colors.onSurfaceVariant),
           onSelected: onSelected,
           itemBuilder: (context) => [
             const PopupMenuItem<BookCardAction>(
@@ -179,7 +168,6 @@ class _BookActionsButton extends StatelessWidget {
                 value: BookCardAction.removeFromCollection,
                 child: Text('Remove from folder'),
               ),
-            const PopupMenuDivider(),
             const PopupMenuItem<BookCardAction>(
               value: BookCardAction.delete,
               child: Text('Delete book completely'),
@@ -209,23 +197,31 @@ class _BookCover extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: AppCorners.md,
-        border: Border.all(
-          color: colors.onSurface.withValues(alpha: 0.08),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color, Color.lerp(color, colors.onSurface, 0.18) ?? color],
         ),
+        borderRadius: AppCorners.md,
       ),
       child: Stack(
         children: [
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 22,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colors.onSurface.withValues(alpha: 0.08),
+              ),
+            ),
+          ),
           Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  icon,
-                  size: 42,
-                  color: colors.onPrimary,
-                ),
+                Icon(icon, size: 42, color: colors.onPrimary),
                 const SizedBox(height: AppSpacing.x3),
                 DecoratedBox(
                   decoration: BoxDecoration(
@@ -243,7 +239,7 @@ class _BookCover extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: colors.onSurface,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                         height: 1.1,
                       ),
                     ),
