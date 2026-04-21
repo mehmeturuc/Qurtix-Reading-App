@@ -32,8 +32,10 @@ class NotesScreen extends StatefulWidget {
 class _NotesScreenState extends State<NotesScreen> {
   String? _bookId;
   _AnnotationTypeFilter _typeFilter = _AnnotationTypeFilter.all;
+  final TextEditingController _searchController = TextEditingController();
   bool _favoritesOnly = false;
   bool _isLoadingAnnotations = false;
+  String _searchQuery = '';
   late List<Book> _books;
   late Map<String, Book> _booksById;
 
@@ -42,6 +44,12 @@ class _NotesScreenState extends State<NotesScreen> {
     super.initState();
     _refreshBookCache();
     _scheduleAnnotationLoad();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -89,7 +97,8 @@ class _NotesScreenState extends State<NotesScreen> {
               final hasActiveFilters =
                   _bookId != null ||
                   _typeFilter != _AnnotationTypeFilter.all ||
-                  _favoritesOnly;
+                  _favoritesOnly ||
+                  _searchQuery.trim().isNotEmpty;
 
               return ListView.builder(
                 padding: const EdgeInsets.fromLTRB(
@@ -108,6 +117,15 @@ class _NotesScreenState extends State<NotesScreen> {
                       selectedBookId: _bookId,
                       typeFilter: _typeFilter,
                       favoritesOnly: _favoritesOnly,
+                      searchController: _searchController,
+                      searchQuery: _searchQuery,
+                      onSearchChanged: (value) {
+                        setState(() => _searchQuery = value);
+                      },
+                      onClearSearch: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
                       onBookChanged: (value) => setState(() => _bookId = value),
                       onTypeChanged: (value) {
                         if (value == null) return;
@@ -122,6 +140,8 @@ class _NotesScreenState extends State<NotesScreen> {
                                 _bookId = null;
                                 _typeFilter = _AnnotationTypeFilter.all;
                                 _favoritesOnly = false;
+                                _searchQuery = '';
+                                _searchController.clear();
                               });
                             }
                           : null,
@@ -170,6 +190,8 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   List<ReaderAnnotation> _applyFilters(List<ReaderAnnotation> annotations) {
+    final query = _searchQuery.trim().toLowerCase();
+
     return annotations
         .where((annotation) {
           if (!annotation.isUserAnnotation) return false;
@@ -185,11 +207,87 @@ class _NotesScreenState extends State<NotesScreen> {
               annotation.type == ReaderAnnotationType.bookmark,
           };
           final matchesFavorite = !_favoritesOnly || annotation.isFavorite;
+          final matchesSearch = _matchesSearch(annotation, query);
 
-          return matchesBook && matchesType && matchesFavorite;
+          return matchesBook && matchesType && matchesFavorite && matchesSearch;
         })
         .toList(growable: false)
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      ..sort(_compareAnnotationsByBookPosition);
+  }
+
+  bool _matchesSearch(ReaderAnnotation annotation, String query) {
+    if (query.isEmpty) return true;
+
+    final book = _booksById[annotation.bookId];
+    final fields = [
+      annotationSelectedTextForDisplay(annotation),
+      plainAnnotationTextForDisplay(annotation.noteText),
+      annotation.displayTypeLabel,
+      annotation.locationRef,
+      book?.title ?? '',
+      book?.author ?? '',
+    ].join(' ').toLowerCase();
+
+    return fields.contains(query);
+  }
+
+  int _compareAnnotationsByBookPosition(
+    ReaderAnnotation a,
+    ReaderAnnotation b,
+  ) {
+    if (_bookId == null) {
+      final aBook = _booksById[a.bookId];
+      final bBook = _booksById[b.bookId];
+      final titleCompare = (aBook?.title.toLowerCase() ?? '').compareTo(
+        bBook?.title.toLowerCase() ?? '',
+      );
+      if (titleCompare != 0) return titleCompare;
+
+      final bookCompare = a.bookId.compareTo(b.bookId);
+      if (bookCompare != 0) return bookCompare;
+    }
+
+    final positionCompare = _positionKeyFor(a).compareTo(_positionKeyFor(b));
+    if (positionCompare != 0) return positionCompare;
+
+    final createdCompare = a.createdAt.compareTo(b.createdAt);
+    if (createdCompare != 0) return createdCompare;
+
+    return a.id.compareTo(b.id);
+  }
+
+  _AnnotationPositionKey _positionKeyFor(ReaderAnnotation annotation) {
+    final pdfPage = annotation.pdfPageNumber;
+    if (pdfPage != null) {
+      return _AnnotationPositionKey(
+        sourceRank: 0,
+        major: pdfPage.toDouble(),
+        minor: annotation.pdfLocalSortOffset ?? 0,
+      );
+    }
+
+    final epubOffset = annotation.epubSortOffset;
+    if (epubOffset != null) {
+      return _AnnotationPositionKey(
+        sourceRank: 1,
+        major: epubOffset.toDouble(),
+      );
+    }
+
+    final textStart = annotation.locationStartIndex;
+    if (textStart != null) {
+      return _AnnotationPositionKey(sourceRank: 2, major: textStart.toDouble());
+    }
+
+    final progress = annotation.epubProgress;
+    if (progress != null) {
+      return _AnnotationPositionKey(
+        sourceRank: 3,
+        major: progress * 1000000000,
+      );
+    }
+
+    return const _AnnotationPositionKey(sourceRank: 4, major: double.infinity);
   }
 
   void _openAnnotation(ReaderAnnotation annotation) {
@@ -399,6 +497,10 @@ class _NotesFilters extends StatelessWidget {
     required this.selectedBookId,
     required this.typeFilter,
     required this.favoritesOnly,
+    required this.searchController,
+    required this.searchQuery,
+    required this.onSearchChanged,
+    required this.onClearSearch,
     required this.onBookChanged,
     required this.onTypeChanged,
     required this.onFavoritesChanged,
@@ -409,6 +511,10 @@ class _NotesFilters extends StatelessWidget {
   final String? selectedBookId;
   final _AnnotationTypeFilter typeFilter;
   final bool favoritesOnly;
+  final TextEditingController searchController;
+  final String searchQuery;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onClearSearch;
   final ValueChanged<String?> onBookChanged;
   final ValueChanged<_AnnotationTypeFilter?> onTypeChanged;
   final ValueChanged<bool> onFavoritesChanged;
@@ -431,6 +537,13 @@ class _NotesFilters extends StatelessWidget {
           selectedBookId: selectedBookId,
           selectedLabel: selectedBook?.title ?? 'All books',
           onChanged: onBookChanged,
+        );
+
+        final searchField = _NotesSearchField(
+          controller: searchController,
+          query: searchQuery,
+          onChanged: onSearchChanged,
+          onClear: onClearSearch,
         );
 
         final typeTabs = _NotesSegmentedControl<_AnnotationTypeFilter>(
@@ -468,40 +581,118 @@ class _NotesFilters extends StatelessWidget {
         return AppSection(
           backgroundColor: colors.surfaceContainerLow,
           padding: const EdgeInsets.all(6),
-          child: compact
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    bookMenu,
-                    const SizedBox(height: AppSpacing.x2),
-                    typeTabs,
-                    const SizedBox(height: AppSpacing.x2),
-                    Wrap(
-                      spacing: AppSpacing.x2,
-                      runSpacing: AppSpacing.x1,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              searchField,
+              const SizedBox(height: AppSpacing.x2),
+              compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        bookMenu,
+                        const SizedBox(height: AppSpacing.x2),
+                        typeTabs,
+                        const SizedBox(height: AppSpacing.x2),
+                        Wrap(
+                          spacing: AppSpacing.x2,
+                          runSpacing: AppSpacing.x1,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            favorites,
+                            if (onClearFilters != null) clearFilters,
+                          ],
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        SizedBox(width: 252, child: bookMenu),
+                        const SizedBox(width: AppSpacing.x3),
+                        Expanded(child: typeTabs),
+                        const SizedBox(width: AppSpacing.x3),
                         favorites,
-                        if (onClearFilters != null) clearFilters,
+                        if (onClearFilters != null) ...[
+                          const SizedBox(width: AppSpacing.x2),
+                          clearFilters,
+                        ],
                       ],
                     ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    SizedBox(width: 252, child: bookMenu),
-                    const SizedBox(width: AppSpacing.x3),
-                    Expanded(child: typeTabs),
-                    const SizedBox(width: AppSpacing.x3),
-                    favorites,
-                    if (onClearFilters != null) ...[
-                      const SizedBox(width: AppSpacing.x2),
-                      clearFilters,
-                    ],
-                  ],
-                ),
+            ],
+          ),
         );
       },
+    );
+  }
+}
+
+class _NotesSearchField extends StatelessWidget {
+  const _NotesSearchField({
+    required this.controller,
+    required this.query,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final String query;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Material(
+      color: colors.surfaceContainerLowest,
+      borderRadius: AppCorners.lg,
+      clipBehavior: Clip.antiAlias,
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: AppCorners.lg,
+          border: Border.fromBorderSide(AppBorders.ghost(colors)),
+        ),
+        child: TextField(
+          controller: controller,
+          onChanged: onChanged,
+          textInputAction: TextInputAction.search,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontFamily: AppTypography.sans,
+            color: colors.onSurface,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            hintText: 'Search notes, books, or authors',
+            hintStyle: theme.textTheme.bodyMedium?.copyWith(
+              fontFamily: AppTypography.sans,
+              color: colors.onSurfaceVariant,
+              fontSize: 13,
+            ),
+            border: InputBorder.none,
+            isDense: true,
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              size: 17,
+              color: colors.onSurfaceVariant,
+            ),
+            prefixIconConstraints: const BoxConstraints(
+              minWidth: 36,
+              minHeight: 34,
+            ),
+            suffixIcon: query.trim().isEmpty
+                ? null
+                : IconButton(
+                    onPressed: onClear,
+                    icon: const Icon(Icons.close_rounded),
+                    iconSize: 17,
+                    tooltip: 'Clear search',
+                    visualDensity: VisualDensity.compact,
+                  ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -535,64 +726,47 @@ class _BookFilterControl extends StatelessWidget {
           borderRadius: AppCorners.lg,
           border: Border.fromBorderSide(AppBorders.ghost(colors)),
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, AppSpacing.x2, 6),
-          child: Row(
-            children: [
-              Icon(Icons.menu_book_outlined, size: 15, color: colors.secondary),
-              const SizedBox(width: AppSpacing.x2),
-              Expanded(
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: selectedBookId ?? _allBooksValue,
-                    isExpanded: true,
-                    borderRadius: AppCorners.lg,
-                    dropdownColor: colors.surfaceContainerLowest,
-                    icon: Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: colors.onSurfaceVariant,
-                    ),
-                    selectedItemBuilder: (context) {
-                      return [
-                        _BookFilterSelectedLabel(label: selectedLabel),
-                        for (final book in books)
-                          _BookFilterSelectedLabel(label: book.title),
-                      ];
-                    },
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontFamily: AppTypography.sans,
-                      color: colors.onSurface,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    items: [
-                      DropdownMenuItem<String>(
-                        value: _allBooksValue,
-                        child: _BookFilterMenuItem(
-                          label: 'All books',
-                          selected: selectedBookId == null,
-                        ),
-                      ),
-                      for (final book in books)
-                        DropdownMenuItem<String>(
-                          value: book.id,
-                          child: _BookFilterMenuItem(
-                            label: book.title,
-                            selected: selectedBookId == book.id,
-                          ),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      onChanged(value == _allBooksValue ? null : value);
-                    },
-                  ),
+        child: InkWell(
+          onTap: () => _openBookPicker(context),
+          borderRadius: AppCorners.lg,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, AppSpacing.x2, 7),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.menu_book_outlined,
+                  size: 15,
+                  color: colors.secondary,
                 ),
-              ),
-            ],
+                const SizedBox(width: AppSpacing.x2),
+                Expanded(child: _BookFilterSelectedLabel(label: selectedLabel)),
+                const SizedBox(width: AppSpacing.x1),
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: colors.onSurfaceVariant,
+                  size: 20,
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _openBookPicker(BuildContext context) async {
+    final value = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      builder: (context) {
+        return _BookPickerSheet(books: books, selectedBookId: selectedBookId);
+      },
+    );
+    if (value == null) return;
+
+    onChanged(value == _allBooksValue ? null : value);
   }
 }
 
@@ -636,6 +810,222 @@ class _BookFilterSelectedLabel extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _BookPickerSheet extends StatefulWidget {
+  const _BookPickerSheet({required this.books, required this.selectedBookId});
+
+  final List<Book> books;
+  final String? selectedBookId;
+
+  @override
+  State<_BookPickerSheet> createState() => _BookPickerSheetState();
+}
+
+class _BookPickerSheetState extends State<_BookPickerSheet> {
+  static const _allBooksValue = _BookFilterControl._allBooksValue;
+
+  final TextEditingController _controller = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final query = _query.trim().toLowerCase();
+    final filteredBooks = query.isEmpty
+        ? widget.books
+        : widget.books
+              .where((book) {
+                final fields = '${book.title} ${book.author ?? ''}'
+                    .toLowerCase();
+
+                return fields.contains(query);
+              })
+              .toList(growable: false);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.x4,
+        0,
+        AppSpacing.x4,
+        MediaQuery.paddingOf(context).bottom + AppSpacing.x4,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 460),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Choose book',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.x2),
+            Material(
+              color: colors.surfaceContainerLowest,
+              borderRadius: AppCorners.lg,
+              clipBehavior: Clip.antiAlias,
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                onChanged: (value) => setState(() => _query = value),
+                textInputAction: TextInputAction.search,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontFamily: AppTypography.sans,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Search books or authors',
+                  border: InputBorder.none,
+                  isDense: true,
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    size: 17,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  prefixIconConstraints: const BoxConstraints(
+                    minWidth: 36,
+                    minHeight: 38,
+                  ),
+                  suffixIcon: query.isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            _controller.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                          iconSize: 17,
+                          tooltip: 'Clear search',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.x2),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  _BookPickerTile(
+                    title: 'All books',
+                    subtitle: '${widget.books.length} books',
+                    selected: widget.selectedBookId == null,
+                    onTap: () => Navigator.of(context).pop(_allBooksValue),
+                  ),
+                  for (final book in filteredBooks)
+                    _BookPickerTile(
+                      title: book.title,
+                      subtitle: book.displayAuthor,
+                      selected: widget.selectedBookId == book.id,
+                      onTap: () => Navigator.of(context).pop(book.id),
+                    ),
+                  if (filteredBooks.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Text(
+                        'No books found',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BookPickerTile extends StatelessWidget {
+  const _BookPickerTile({
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.x1),
+      child: Material(
+        color: selected
+            ? colors.secondaryContainer.withValues(alpha: 0.44)
+            : colors.surfaceContainerLowest,
+        borderRadius: AppCorners.lg,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: AppCorners.lg,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontFamily: AppTypography.sans,
+                          color: colors.onSurface,
+                          fontSize: 13,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontFamily: AppTypography.sans,
+                          color: colors.onSurfaceVariant,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected) ...[
+                  const SizedBox(width: AppSpacing.x2),
+                  Icon(Icons.check_rounded, size: 17, color: colors.secondary),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -732,41 +1122,6 @@ class _NotesSegment<T> extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _BookFilterMenuItem extends StatelessWidget {
-  const _BookFilterMenuItem({required this.label, required this.selected});
-
-  final String label;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontFamily: AppTypography.sans,
-              color: colors.onSurface,
-              fontSize: 13,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-            ),
-          ),
-        ),
-        if (selected) ...[
-          const SizedBox(width: AppSpacing.x2),
-          Icon(Icons.check_rounded, size: 16, color: colors.secondary),
-        ],
-      ],
     );
   }
 }
@@ -902,7 +1257,7 @@ class _NotesSummary extends StatelessWidget {
           ),
         ),
         Text(
-          'Newest first',
+          'Book order',
           style: theme.textTheme.bodySmall?.copyWith(
             fontFamily: AppTypography.sans,
             color: colors.onSurfaceVariant,
@@ -994,8 +1349,6 @@ class _NoteCard extends StatelessWidget {
                                   _NoteMetaChip(
                                     label: annotation.displayTypeLabel,
                                   ),
-                                  if (locationLabel != null)
-                                    _NoteMetaChip(label: locationLabel),
                                   if (annotation.isFavorite)
                                     const _NoteMetaChip(
                                       label: 'Favorite',
@@ -1003,6 +1356,10 @@ class _NoteCard extends StatelessWidget {
                                     ),
                                 ],
                               ),
+                              if (locationLabel != null) ...[
+                                const SizedBox(height: AppSpacing.x1),
+                                _NoteLocationRow(label: locationLabel),
+                              ],
                             ],
                           ),
                         ),
@@ -1044,7 +1401,19 @@ class _NoteCard extends StatelessWidget {
 
     final progress = annotation.epubProgress;
     if (progress != null) {
-      return '${(progress.clamp(0.0, 1.0) * 100).round()}%';
+      final percent = (progress.clamp(0.0, 1.0) * 100).round();
+      final chapter = annotation.epubChapterIndex;
+      if (chapter != null) return 'Chapter ${chapter + 1} - $percent%';
+
+      return 'Progress $percent%';
+    }
+
+    final chapter = annotation.epubChapterIndex;
+    if (chapter != null) return 'Chapter ${chapter + 1}';
+
+    final textStart = annotation.locationStartIndex;
+    if (textStart != null) {
+      return 'Location ${_compactNumber(textStart + 1)}';
     }
 
     if (bookType == BookFileType.pdf) return 'PDF';
@@ -1052,6 +1421,40 @@ class _NoteCard extends StatelessWidget {
     if (bookType == BookFileType.plainText) return 'Text';
 
     return null;
+  }
+
+  String _compactNumber(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+
+    for (var index = 0; index < text.length; index++) {
+      if (index > 0 && (text.length - index) % 3 == 0) buffer.write(',');
+      buffer.write(text[index]);
+    }
+
+    return buffer.toString();
+  }
+}
+
+class _AnnotationPositionKey {
+  const _AnnotationPositionKey({
+    required this.sourceRank,
+    required this.major,
+    this.minor = 0,
+  });
+
+  final int sourceRank;
+  final double major;
+  final double minor;
+
+  int compareTo(_AnnotationPositionKey other) {
+    final sourceCompare = sourceRank.compareTo(other.sourceRank);
+    if (sourceCompare != 0) return sourceCompare;
+
+    final majorCompare = major.compareTo(other.major);
+    if (majorCompare != 0) return majorCompare;
+
+    return minor.compareTo(other.minor);
   }
 }
 
@@ -1235,6 +1638,45 @@ class _OpenReaderButton extends StatelessWidget {
           fontWeight: FontWeight.w500,
         ),
       ),
+    );
+  }
+}
+
+class _NoteLocationRow extends StatelessWidget {
+  const _NoteLocationRow({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.place_outlined,
+          size: 12,
+          color: colors.secondary.withValues(alpha: 0.82),
+        ),
+        const SizedBox(width: AppSpacing.x1),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontFamily: AppTypography.sans,
+              color: colors.onSurfaceVariant,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              height: 1.12,
+              letterSpacing: 0,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

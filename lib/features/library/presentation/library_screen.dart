@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/utils/responsive_grid.dart';
@@ -6,6 +8,7 @@ import '../../../shared/widgets/app_page.dart';
 import '../../lists/domain/custom_list.dart';
 import '../../lists/domain/list_repository.dart';
 import '../../reader/domain/annotation_repository.dart';
+import '../../reader/domain/reader_annotation.dart';
 import '../../reader/presentation/reader_screen.dart';
 import '../application/document_import_service.dart';
 import '../domain/book.dart';
@@ -30,8 +33,31 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   final DocumentImportService _importService = DocumentImportService();
+  final TextEditingController _searchController = TextEditingController();
   bool _isImporting = false;
+  bool _isSearchVisible = false;
+  String _searchQuery = '';
   String? _selectedCollection;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleAnnotationLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant LibraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.annotationRepository != widget.annotationRepository) {
+      _scheduleAnnotationLoad();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,19 +73,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
         title: const Text('Library'),
         actions: [
           IconButton(
-            onPressed: _isImporting ? null : _importBook,
-            icon: _isImporting
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.upload_file_rounded),
-            tooltip: 'Import PDF or EPUB',
-          ),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.search_rounded),
-            tooltip: 'Search',
+            onPressed: _toggleSearch,
+            icon: Icon(
+              _isSearchVisible || _searchQuery.isNotEmpty
+                  ? Icons.close_rounded
+                  : Icons.search_rounded,
+            ),
+            tooltip: _isSearchVisible || _searchQuery.isNotEmpty
+                ? 'Close search'
+                : 'Search',
           ),
         ],
       ),
@@ -116,83 +138,112 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                 ),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = ResponsiveGrid.columnsForWidth(
-                      constraints.maxWidth,
-                    );
-                    final cardExtent = _bookCardExtent(
-                      width: constraints.maxWidth,
-                      columns: columns,
-                    );
-
-                    if (books.isEmpty) {
-                      return Center(
-                        child: AppSection(
-                          padding: const EdgeInsets.all(AppSpacing.x8),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.menu_book_outlined,
-                                color: colors.secondary,
-                                size: 36,
-                              ),
-                              const SizedBox(height: AppSpacing.x4),
-                              Text(
-                                _selectedCollection == null
-                                    ? 'Your shelf is ready'
-                                    : 'No books in this folder',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: AppSpacing.x2),
-                              Text(
-                                _selectedCollection == null
-                                    ? 'Import a PDF or EPUB to begin.'
-                                    : 'Move a book here from its menu.',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: colors.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                child: _isSearchVisible
+                    ? Padding(
+                        key: const ValueKey('library-search'),
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.x5,
+                          AppSpacing.x2,
+                          AppSpacing.x6,
+                          0,
                         ),
-                      );
-                    }
-
-                    return GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.x5,
-                        AppSpacing.x2,
-                        AppSpacing.x6,
-                        28,
+                        child: _LibrarySearchField(
+                          controller: _searchController,
+                          onChanged: _setSearchQuery,
+                          onClear: () => _clearSearch(),
+                        ),
+                      )
+                    : const SizedBox.shrink(
+                        key: ValueKey('library-search-hidden'),
                       ),
-                      itemCount: books.length,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: AppSpacing.x4,
-                        mainAxisSpacing: AppSpacing.x4,
-                        mainAxisExtent: cardExtent,
-                      ),
-                      itemBuilder: (context, index) {
-                        final book = books[index];
+              ),
+              Expanded(
+                child: ValueListenableBuilder<List<ReaderAnnotation>>(
+                  valueListenable: widget.annotationRepository
+                      .watchAnnotations(),
+                  builder: (context, annotations, _) {
+                    final progressByBookId = _progressByBookId(annotations);
 
-                        return BookCard(
-                          book: book,
-                          collectionName: collectionByBookId[book.id],
-                          onTap: () => _openBook(context, book),
-                          onActionSelected: (action) {
-                            switch (action) {
-                              case BookCardAction.organize:
-                                _organizeBook(book);
-                              case BookCardAction.removeFromCollection:
-                                _removeBookFromCollection(book);
-                              case BookCardAction.delete:
-                                _confirmDeleteBook(book);
-                            }
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = ResponsiveGrid.columnsForWidth(
+                          constraints.maxWidth,
+                        );
+                        final cardExtent = _bookCardExtent(
+                          width: constraints.maxWidth,
+                          columns: columns,
+                        );
+
+                        if (books.isEmpty) {
+                          return Center(
+                            child: AppSection(
+                              padding: const EdgeInsets.all(AppSpacing.x8),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.menu_book_outlined,
+                                    color: colors.secondary,
+                                    size: 36,
+                                  ),
+                                  const SizedBox(height: AppSpacing.x4),
+                                  Text(
+                                    _emptyTitle,
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: AppSpacing.x2),
+                                  Text(
+                                    _emptyMessage,
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: colors.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+
+                        return GridView.builder(
+                          padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.x5,
+                            AppSpacing.x2,
+                            AppSpacing.x6,
+                            28,
+                          ),
+                          itemCount: books.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                crossAxisSpacing: AppSpacing.x4,
+                                mainAxisSpacing: AppSpacing.x4,
+                                mainAxisExtent: cardExtent,
+                              ),
+                          itemBuilder: (context, index) {
+                            final book = books[index];
+
+                            return BookCard(
+                              book: book,
+                              collectionName: collectionByBookId[book.id],
+                              progress: progressByBookId[book.id],
+                              onTap: () => _openBook(context, book),
+                              onActionSelected: (action) {
+                                switch (action) {
+                                  case BookCardAction.organize:
+                                    _organizeBook(book);
+                                  case BookCardAction.removeFromCollection:
+                                    _removeBookFromCollection(book);
+                                  case BookCardAction.delete:
+                                    _confirmDeleteBook(book);
+                                }
+                              },
+                            );
                           },
                         );
                       },
@@ -205,6 +256,100 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  void _scheduleAnnotationLoad() {
+    if (widget.annotationRepository.isLoaded) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.annotationRepository.isLoaded) return;
+      unawaited(_loadAnnotations());
+    });
+  }
+
+  Future<void> _loadAnnotations() async {
+    try {
+      await widget.annotationRepository.ensureLoaded();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load reading progress')),
+      );
+    }
+  }
+
+  Map<String, BookCardProgress> _progressByBookId(
+    List<ReaderAnnotation> annotations,
+  ) {
+    final values = <String, BookCardProgress>{};
+
+    for (final annotation in annotations) {
+      if (!annotation.isReaderState) continue;
+
+      final book = widget.bookRepository.getBookById(annotation.bookId);
+      if (book == null) continue;
+
+      final progress = _progressForBook(book, annotation);
+      if (progress != null) values[book.id] = progress;
+    }
+
+    return values;
+  }
+
+  BookCardProgress? _progressForBook(Book book, ReaderAnnotation annotation) {
+    switch (book.sourceType) {
+      case BookFileType.pdf:
+        final page = annotation.pdfPageNumber;
+        if (page == null) return null;
+
+        final progress = annotation.pdfProgress;
+        final totalPages = annotation.pdfTotalPages;
+        final label = totalPages == null
+            ? 'Page $page'
+            : 'Page $page of $totalPages - ${_percentLabel(progress ?? 0)}';
+
+        return BookCardProgress(label: label, progress: progress ?? 0);
+      case BookFileType.epub:
+        final progress = annotation.epubProgress;
+        if (progress == null) return null;
+
+        final chapter = annotation.epubChapterIndex;
+        final sourceOffset = annotation.epubSourceOffset;
+        final place = chapter != null
+            ? 'Chapter ${chapter + 1}'
+            : sourceOffset != null
+            ? 'Location ${_compactNumber(sourceOffset + 1)}'
+            : 'Progress';
+
+        return BookCardProgress(
+          label: '$place - ${_percentLabel(progress)}',
+          progress: progress,
+        );
+      case BookFileType.plainText:
+        final progress = annotation.epubProgress;
+        if (progress == null) return null;
+
+        return BookCardProgress(
+          label: 'Progress - ${_percentLabel(progress)}',
+          progress: progress,
+        );
+    }
+  }
+
+  String _percentLabel(double progress) {
+    return '${(progress.clamp(0.0, 1.0) * 100).round()}%';
+  }
+
+  String _compactNumber(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+
+    for (var index = 0; index < text.length; index++) {
+      if (index > 0 && (text.length - index) % 3 == 0) buffer.write(',');
+      buffer.write(text[index]);
+    }
+
+    return buffer.toString();
   }
 
   double _bookCardExtent({required double width, required int columns}) {
@@ -221,11 +366,43 @@ class _LibraryScreenState extends State<LibraryScreen> {
     Map<String, String> collectionByBookId,
   ) {
     final selected = _selectedCollection;
-    if (selected == null) return books;
+    final query = _searchQuery.trim().toLowerCase();
 
     return books
-        .where((book) => collectionByBookId[book.id] == selected)
+        .where((book) {
+          final matchesCollection =
+              selected == null || collectionByBookId[book.id] == selected;
+          if (!matchesCollection) return false;
+          if (query.isEmpty) return true;
+
+          final collection = collectionByBookId[book.id] ?? '';
+          final fields = [
+            book.title,
+            book.author ?? '',
+            book.fileType,
+            book.sourceType.label,
+            collection,
+          ].join(' ').toLowerCase();
+
+          return fields.contains(query);
+        })
         .toList(growable: false);
+  }
+
+  String get _emptyTitle {
+    if (_searchQuery.trim().isNotEmpty) return 'No matching books';
+    if (_selectedCollection == null) return 'Your shelf is ready';
+
+    return 'No books in this folder';
+  }
+
+  String get _emptyMessage {
+    if (_searchQuery.trim().isNotEmpty) {
+      return 'Try a title, author, format, or folder name.';
+    }
+    if (_selectedCollection == null) return 'Import a PDF or EPUB to begin.';
+
+    return 'Move a book here from its menu.';
   }
 
   Map<String, String> _collectionMapFor(List<Book> books) {
@@ -281,6 +458,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     } finally {
       if (mounted) setState(() => _isImporting = false);
+    }
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      if (_isSearchVisible || _searchQuery.isNotEmpty) {
+        _clearSearch(shouldSetState: false);
+        _isSearchVisible = false;
+      } else {
+        _isSearchVisible = true;
+      }
+    });
+  }
+
+  void _setSearchQuery(String value) {
+    setState(() => _searchQuery = value);
+  }
+
+  void _clearSearch({bool shouldSetState = true}) {
+    _searchController.clear();
+    if (shouldSetState) {
+      setState(() => _searchQuery = '');
+    } else {
+      _searchQuery = '';
     }
   }
 
@@ -439,17 +640,29 @@ class _LibraryHeader extends StatelessWidget {
     return AppSection(
       backgroundColor: colors.surfaceContainerLow,
       padding: const EdgeInsets.fromLTRB(
-        AppSpacing.x4,
+        AppSpacing.x5,
         AppSpacing.x3,
-        AppSpacing.x4,
-        AppSpacing.x2,
+        AppSpacing.x5,
+        AppSpacing.x3,
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isCompact = constraints.maxWidth < 560;
+          final eyebrow = selectedCollection == null ? 'Library' : 'Folder';
           final copy = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(
+                eyebrow,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontFamily: AppTypography.sans,
+                  color: colors.secondary,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 5),
               Text(
                 title,
                 maxLines: 2,
@@ -463,7 +676,7 @@ class _LibraryHeader extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
               ),
-              SizedBox(height: isCompact ? AppSpacing.x1 : AppSpacing.x2),
+              SizedBox(height: isCompact ? AppSpacing.x2 : AppSpacing.x3),
               Wrap(
                 spacing: AppSpacing.x2,
                 runSpacing: AppSpacing.x1,
@@ -485,43 +698,17 @@ class _LibraryHeader extends StatelessWidget {
               ),
             ],
           );
-          final button = DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: AppGradients.primarySatin,
-              borderRadius: AppCorners.pill,
-            ),
-            child: FilledButton.icon(
-              onPressed: isImporting ? null : onImport,
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                disabledBackgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.x3,
-                  vertical: AppSpacing.x2,
-                ),
-                minimumSize: const Size(0, 34),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              icon: isImporting
-                  ? SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: colors.onPrimary,
-                      ),
-                    )
-                  : const Icon(Icons.upload_file_rounded),
-              label: const Text('Import'),
-            ),
+          final button = _ImportButton(
+            isImporting: isImporting,
+            onTap: onImport,
           );
 
           if (isCompact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                copy,
-                const SizedBox(height: AppSpacing.x3),
+                Expanded(child: copy),
+                const SizedBox(width: AppSpacing.x3),
                 button,
               ],
             );
@@ -536,6 +723,120 @@ class _LibraryHeader extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _LibrarySearchField extends StatelessWidget {
+  const _LibrarySearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return AppSection(
+      backgroundColor: colors.surfaceContainerLow,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.x3,
+        vertical: AppSpacing.x1,
+      ),
+      child: TextField(
+        controller: controller,
+        autofocus: true,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          fontFamily: AppTypography.sans,
+          color: colors.onSurface,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
+        decoration: InputDecoration(
+          hintText: 'Search title, author, format, or folder',
+          hintStyle: theme.textTheme.bodyMedium?.copyWith(
+            fontFamily: AppTypography.sans,
+            color: colors.onSurfaceVariant,
+            fontSize: 13,
+          ),
+          border: InputBorder.none,
+          isDense: true,
+          prefixIcon: Icon(
+            Icons.search_rounded,
+            size: 18,
+            color: colors.onSurfaceVariant,
+          ),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 34,
+            minHeight: 34,
+          ),
+          suffixIcon: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) {
+              if (value.text.isEmpty) return const SizedBox.shrink();
+
+              return IconButton(
+                onPressed: onClear,
+                icon: const Icon(Icons.close_rounded),
+                iconSize: 17,
+                tooltip: 'Clear search',
+                visualDensity: VisualDensity.compact,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportButton extends StatelessWidget {
+  const _ImportButton({required this.isImporting, required this.onTap});
+
+  final bool isImporting;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: AppGradients.primarySatin,
+        borderRadius: AppCorners.pill,
+      ),
+      child: FilledButton.icon(
+        onPressed: isImporting ? null : onTap,
+        style: FilledButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          disabledBackgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.x3,
+            vertical: AppSpacing.x2,
+          ),
+          minimumSize: const Size(0, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: isImporting
+            ? SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.onPrimary,
+                ),
+              )
+            : const Icon(Icons.upload_file_rounded),
+        label: const Text('Import'),
       ),
     );
   }

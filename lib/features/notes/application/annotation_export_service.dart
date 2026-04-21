@@ -37,8 +37,8 @@ class AnnotationExportService {
   const AnnotationExportService({
     required AnnotationRepository annotationRepository,
     required BookRepository bookRepository,
-  })  : _annotationRepository = annotationRepository,
-        _bookRepository = bookRepository;
+  }) : _annotationRepository = annotationRepository,
+       _bookRepository = bookRepository;
 
   final AnnotationRepository _annotationRepository;
   final BookRepository _bookRepository;
@@ -62,22 +62,26 @@ class AnnotationExportService {
   }
 
   List<ReaderAnnotation> _annotationsFor(AnnotationExportRequest request) {
-    final annotations = _annotationRepository.getAnnotations().where((annotation) {
-      if (!annotation.isUserAnnotation) return false;
+    final annotations = _annotationRepository
+        .getAnnotations()
+        .where((annotation) {
+          if (!annotation.isUserAnnotation) return false;
 
-      final matchesBook = request.bookId == null || annotation.bookId == request.bookId;
-      final matchesFavorite = !request.favoritesOnly || annotation.isFavorite;
+          final matchesBook =
+              request.bookId == null || annotation.bookId == request.bookId;
+          final matchesFavorite =
+              !request.favoritesOnly || annotation.isFavorite;
 
-      return matchesBook && matchesFavorite;
-    }).toList(growable: false);
+          return matchesBook && matchesFavorite;
+        })
+        .toList(growable: false);
 
-    return annotations.toList()
-      ..sort((a, b) {
-        final book = _bookTitle(a.bookId).compareTo(_bookTitle(b.bookId));
-        if (book != 0) return book;
+    return annotations.toList()..sort((a, b) {
+      final book = _bookTitle(a.bookId).compareTo(_bookTitle(b.bookId));
+      if (book != 0) return book;
 
-        return a.createdAt.compareTo(b.createdAt);
-      });
+      return a.createdAt.compareTo(b.createdAt);
+    });
   }
 
   String _contentFor(
@@ -142,7 +146,9 @@ class AnnotationExportService {
       final annotation = annotations[i];
 
       buffer
-        ..writeln('## ${i + 1}. ${_escapeMarkdown(_bookTitle(annotation.bookId))}')
+        ..writeln(
+          '## ${i + 1}. ${_escapeMarkdown(_bookTitle(annotation.bookId))}',
+        )
         ..writeln()
         ..writeln('- Type: `${annotation.type.name}`')
         ..writeln('- Color: `${annotation.colorId}`')
@@ -204,7 +210,7 @@ class AnnotationExportService {
         .replaceAll(':', '-')
         .replaceAll('.', '-');
 
-    return 'qurtix_annotations_${scope}${favorites}_$timestamp.${request.format.extension}';
+    return 'qurtix_annotations_$scope${favorites}_$timestamp.${request.format.extension}';
   }
 
   String _escapeMarkdown(String value) {
@@ -212,7 +218,10 @@ class AnnotationExportService {
   }
 
   String _blockquote(String value) {
-    return value.split('\n').map((line) => line.isEmpty ? '>' : line).join('\n> ');
+    return value
+        .split('\n')
+        .map((line) => line.isEmpty ? '>' : line)
+        .join('\n> ');
   }
 }
 

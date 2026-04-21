@@ -137,7 +137,15 @@ class _PdfrxSelectionReader extends StatefulWidget {
 
 class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
   static const double _documentPageSpacing = 16;
-  static const Duration _pageJumpDuration = Duration(milliseconds: 260);
+  static const Duration _passivePageSettleDuration = Duration(
+    milliseconds: 160,
+  );
+  static const Duration _pageSettleDelay = Duration(milliseconds: 36);
+  static const Duration _pageSettleCorrectionDelay = Duration(
+    milliseconds: 280,
+  );
+  static const double _pageSettleFriction = 0.00008;
+  static const double _pageSnapVelocity = 650;
 
   late final PdfViewerController _pdfController = PdfViewerController();
 
@@ -146,6 +154,11 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
   int _selectionGeneration = 0;
   bool _didJumpToInitialPage = false;
   bool _didReportWeakSelection = false;
+  int? _interactionStartPage;
+  int _manualPageJumpGeneration = 0;
+  int? _manualPageTarget;
+  Timer? _pageSettleTimer;
+  Timer? _pageSettleCorrectionTimer;
 
   @override
   void initState() {
@@ -180,6 +193,8 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
 
   @override
   void dispose() {
+    _pageSettleTimer?.cancel();
+    _pageSettleCorrectionTimer?.cancel();
     widget.controller?._state = null;
     super.dispose();
   }
@@ -202,12 +217,19 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
                 margin: _documentPageSpacing,
                 backgroundColor: widget.surfaceColor,
                 pageDropShadow: null,
+                panAxis: PanAxis.aligned,
+                pageAnchor: PdfPageAnchor.all,
+                pageAnchorEnd: PdfPageAnchor.all,
+                interactionEndFrictionCoefficient: _pageSettleFriction,
                 scrollHorizontallyByMouseWheel: true,
                 layoutPages: _horizontalPageLayout,
                 enableTextSelection: true,
                 onTextSelectionChange: _handlePdfTextSelectionChanged,
                 onViewerReady: _handleViewerReady,
                 onPageChanged: _handlePageChanged,
+                onInteractionStart: _handleInteractionStart,
+                onInteractionEnd: _handleInteractionEnd,
+                calculateCurrentPageNumber: _calculateCurrentPageNumber,
                 pagePaintCallbacks: [_paintSavedHighlights],
               ),
             ),
@@ -277,6 +299,29 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     );
   }
 
+  int? _calculateCurrentPageNumber(
+    Rect visibleRect,
+    List<Rect> pageRects,
+    PdfViewerController _,
+  ) {
+    if (pageRects.isEmpty) return null;
+
+    final visibleCenter = visibleRect.center;
+    var closestPage = 1;
+    var closestDistance = double.infinity;
+
+    for (var index = 0; index < pageRects.length; index++) {
+      final rect = pageRects[index];
+      final distance = (rect.center.dx - visibleCenter.dx).abs();
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPage = index + 1;
+      }
+    }
+
+    return closestPage;
+  }
+
   int get _safeTotalPages => _totalPages <= 0 ? 1 : _totalPages;
 
   int get _initialPageNumber {
@@ -306,8 +351,80 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
   void _handlePageChanged(int? pageNumber) {
     if (pageNumber == null || pageNumber <= 0) return;
 
-    setState(() => _currentPage = pageNumber.clamp(1, _safeTotalPages).toInt());
-    _notifyPositionChanged();
+    final page = pageNumber.clamp(1, _safeTotalPages).toInt();
+    final manualTarget = _manualPageTarget;
+    if (manualTarget != null && page != manualTarget) return;
+
+    _setCurrentPage(page);
+  }
+
+  void _handleInteractionStart(ScaleStartDetails _) {
+    _cancelPendingPageSettle();
+    if (widget.isSelectionActive) return;
+
+    _interactionStartPage = _nearestVisiblePage() ?? _currentPage;
+  }
+
+  void _handleInteractionEnd(ScaleEndDetails details) {
+    final targetPage = _settleTargetPage(details);
+    _interactionStartPage = null;
+    _schedulePageSettle(targetPage);
+  }
+
+  void _schedulePageSettle(int? targetPage) {
+    _cancelPendingPageSettle();
+    if (widget.isSelectionActive) return;
+    if (targetPage == null) return;
+
+    final generation = _manualPageJumpGeneration;
+    _pageSettleTimer = Timer(
+      _pageSettleDelay,
+      () => _settleToPage(targetPage, generation),
+    );
+    _pageSettleCorrectionTimer = Timer(
+      _pageSettleCorrectionDelay,
+      () => _settleToPage(targetPage, generation),
+    );
+  }
+
+  void _settleToPage(int page, int generation) {
+    if (!mounted || widget.isSelectionActive) return;
+    if (!_pdfController.isReady || _totalPages <= 0) return;
+    if (generation != _manualPageJumpGeneration) return;
+
+    _jumpToPage(
+      page,
+      cancelPendingSettle: false,
+      duration: _passivePageSettleDuration,
+    );
+  }
+
+  int? _settleTargetPage(ScaleEndDetails details) {
+    if (!_pdfController.isReady || _totalPages <= 0) return null;
+
+    final startPage = (_interactionStartPage ?? _currentPage)
+        .clamp(1, _safeTotalPages)
+        .toInt();
+    final horizontalVelocity = details.velocity.pixelsPerSecond.dx;
+
+    if (horizontalVelocity.abs() >= _pageSnapVelocity) {
+      final direction = horizontalVelocity < 0 ? 1 : -1;
+      return (startPage + direction).clamp(1, _safeTotalPages).toInt();
+    }
+
+    return _nearestVisiblePage();
+  }
+
+  int? _nearestVisiblePage() {
+    if (!_pdfController.isReady || _pdfController.layout.pageLayouts.isEmpty) {
+      return null;
+    }
+
+    return _calculateCurrentPageNumber(
+      _pdfController.visibleRect,
+      _pdfController.layout.pageLayouts,
+      _pdfController,
+    )?.clamp(1, _safeTotalPages).toInt();
   }
 
   void _handlePdfTextSelectionChanged(List<PdfTextRanges> selections) {
@@ -431,17 +548,68 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     });
   }
 
-  void _jumpToPage(int page) {
+  void _jumpToPage(
+    int page, {
+    bool cancelPendingSettle = true,
+    Duration duration = Duration.zero,
+  }) {
     if (!_pdfController.isReady || _totalPages <= 0) return;
 
     final safePage = page.clamp(1, _totalPages).toInt();
+    final generation = cancelPendingSettle
+        ? ++_manualPageJumpGeneration
+        : _manualPageJumpGeneration;
+
+    if (cancelPendingSettle) {
+      _manualPageTarget = safePage;
+      _interactionStartPage = null;
+      _cancelPendingPageSettle();
+      _clearSelection();
+    }
+
     unawaited(
-      _pdfController.goToPage(
-        pageNumber: safePage,
-        duration: _pageJumpDuration,
+      _goToPageAndConfirm(
+        page: safePage,
+        generation: generation,
+        isManual: cancelPendingSettle,
+        duration: duration,
       ),
     );
-    setState(() => _currentPage = safePage);
+    _setCurrentPage(safePage);
+  }
+
+  Future<void> _goToPageAndConfirm({
+    required int page,
+    required int generation,
+    required bool isManual,
+    required Duration duration,
+  }) async {
+    await _pdfController.goToPage(
+      pageNumber: page,
+      anchor: PdfPageAnchor.all,
+      duration: duration,
+    );
+    if (!mounted || !_pdfController.isReady) return;
+    if (generation != _manualPageJumpGeneration) return;
+
+    if (isManual) {
+      _manualPageTarget = page;
+      await _pdfController.goToPage(
+        pageNumber: page,
+        anchor: PdfPageAnchor.all,
+        duration: Duration.zero,
+      );
+      if (!mounted || generation != _manualPageJumpGeneration) return;
+      _manualPageTarget = null;
+    }
+
+    _setCurrentPage(page);
+  }
+
+  void _setCurrentPage(int page) {
+    if (_currentPage != page) {
+      setState(() => _currentPage = page);
+    }
     _notifyPositionChanged();
   }
 
@@ -467,6 +635,13 @@ class _PdfrxSelectionReaderState extends State<_PdfrxSelectionReader> {
     _selectionGeneration++;
     _didReportWeakSelection = false;
     widget.onSelectionChanged(null);
+  }
+
+  void _cancelPendingPageSettle() {
+    _pageSettleTimer?.cancel();
+    _pageSettleCorrectionTimer?.cancel();
+    _pageSettleTimer = null;
+    _pageSettleCorrectionTimer = null;
   }
 
   void _paintSavedHighlights(Canvas canvas, Rect pageRect, PdfPage page) {
@@ -698,21 +873,15 @@ class _PdfPageBar extends StatelessWidget {
                   icon: Icons.keyboard_arrow_left_rounded,
                   tooltip: 'Previous page',
                 ),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeOutCubic,
-                  child: Padding(
-                    key: ValueKey('$currentPage-$totalPages'),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      _pageLabel,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        fontFamily: AppTypography.sans,
-                        color: colors.onSurface.withValues(alpha: 0.60),
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0,
-                      ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    _pageLabel,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontFamily: AppTypography.sans,
+                      color: colors.onSurface.withValues(alpha: 0.60),
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
                     ),
                   ),
                 ),

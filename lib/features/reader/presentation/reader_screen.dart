@@ -1044,7 +1044,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _currentProgress = progress;
     _currentPdfPage = position.currentPage;
     _currentPdfTotalPages = position.totalPages;
-    _currentLocationRef = 'pdf:page=${position.currentPage}';
+    _currentLocationRef =
+        'pdf:page=${position.currentPage};'
+        'total=${position.totalPages};'
+        'progress=${progress.toStringAsFixed(4)}';
     _positionLabel.value = _pdfPositionLabel(position);
     _saveReadingPosition();
   }
@@ -1092,6 +1095,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _openBookAnnotations() async {
+    _clearSelection();
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1099,6 +1104,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       useSafeArea: true,
       builder: (context) {
         final mode = _themeMode;
+        final sheetHeight = MediaQuery.sizeOf(context).height * 0.72;
 
         return ValueListenableBuilder<List<ReaderAnnotation>>(
           valueListenable: widget.annotationRepository.watchAnnotations(),
@@ -1107,33 +1113,79 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 .where((annotation) => annotation.isUserAnnotation)
                 .toList(growable: false);
 
-            if (bookAnnotations.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-                child: Text(
-                  'No notes or highlights yet.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              );
-            }
-
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-              child: ReaderAnnotationsSection(
-                annotations: bookAnnotations,
-                textColor: mode.textColor,
-                mutedColor: mode.mutedColor,
-                surfaceColor: mode.textColor.withValues(alpha: 0.05),
-                borderColor: mode.textColor.withValues(alpha: 0.10),
-                maxWidth: 720,
-                onTap: (annotation) {
-                  Navigator.of(context).pop();
-                  _jumpToLocation(annotation);
-                },
-                onDelete: (annotation) {
-                  Navigator.of(context).pop();
-                  _deleteAnnotation(annotation);
-                },
+            return SizedBox(
+              height: sheetHeight,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 10, 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Annotations and bookmarks',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: mode.textColor,
+                                  fontWeight: FontWeight.w800,
+                                  fontFamily: AppTypography.serif,
+                                ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                          tooltip: 'Close notes',
+                          color: mode.mutedColor,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: bookAnnotations.isEmpty
+                        ? Align(
+                            alignment: Alignment.topLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                12,
+                                20,
+                                28,
+                              ),
+                              child: Text(
+                                'No notes or highlights yet.',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: mode.mutedColor),
+                              ),
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+                            child: ReaderAnnotationsSection(
+                              annotations: bookAnnotations,
+                              textColor: mode.textColor,
+                              mutedColor: mode.mutedColor,
+                              surfaceColor: mode.textColor.withValues(
+                                alpha: 0.05,
+                              ),
+                              borderColor: mode.textColor.withValues(
+                                alpha: 0.10,
+                              ),
+                              maxWidth: 720,
+                              showTitle: false,
+                              onTap: (annotation) {
+                                Navigator.of(context).pop();
+                                _jumpToLocation(annotation);
+                              },
+                              onDelete: (annotation) {
+                                Navigator.of(context).pop();
+                                _deleteAnnotation(annotation);
+                              },
+                            ),
+                          ),
+                  ),
+                ],
               ),
             );
           },

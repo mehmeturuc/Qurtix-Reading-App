@@ -5,12 +5,20 @@ import '../../domain/book.dart';
 
 enum BookCardAction { organize, removeFromCollection, delete }
 
+class BookCardProgress {
+  const BookCardProgress({required this.label, required this.progress});
+
+  final String label;
+  final double progress;
+}
+
 class BookCard extends StatelessWidget {
   const BookCard({
     required this.book,
     required this.onTap,
     required this.onActionSelected,
     this.collectionName,
+    this.progress,
     super.key,
   });
 
@@ -18,6 +26,7 @@ class BookCard extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<BookCardAction> onActionSelected;
   final String? collectionName;
+  final BookCardProgress? progress;
 
   static const double horizontalPadding = AppSpacing.x3;
   static const double verticalPadding = AppSpacing.x3;
@@ -25,6 +34,7 @@ class BookCard extends StatelessWidget {
   static const double sectionGap = AppSpacing.x3;
   static const double titleHeight = 44;
   static const double collectionHeight = 22;
+  static const double progressHeight = 30;
 
   static double heightForWidth(double width) {
     final coverWidth = width - (horizontalPadding * 2);
@@ -35,7 +45,9 @@ class BookCard extends StatelessWidget {
         sectionGap +
         titleHeight +
         sectionGap +
-        collectionHeight;
+        collectionHeight +
+        AppSpacing.x2 +
+        progressHeight;
   }
 
   @override
@@ -108,6 +120,18 @@ class BookCard extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: AppSpacing.x2),
+            SizedBox(
+              height: progressHeight,
+              child: _BookProgressRule(
+                progress:
+                    progress ??
+                    const BookCardProgress(
+                      label: 'Not started - 0%',
+                      progress: 0,
+                    ),
+              ),
+            ),
           ],
         ),
       ),
@@ -131,6 +155,61 @@ class BookCard extends StatelessWidget {
       BookFileType.epub => Icons.menu_book_rounded,
       BookFileType.plainText => Icons.article_rounded,
     };
+  }
+}
+
+class _BookProgressRule extends StatelessWidget {
+  const _BookProgressRule({required this.progress});
+
+  final BookCardProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final value = progress.progress.clamp(0.0, 1.0).toDouble();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        ClipRRect(
+          borderRadius: AppCorners.pill,
+          child: SizedBox(
+            height: 3,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ColoredBox(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+                ),
+                FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: value,
+                  child: ColoredBox(
+                    color: colors.primary.withValues(alpha: 0.64),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          progress.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelSmall?.copyWith(
+            fontFamily: AppTypography.sans,
+            color: colors.onSurfaceVariant,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w500,
+            height: 1.1,
+            letterSpacing: 0,
+          ),
+        ),
+      ],
+    );
   }
 }
 

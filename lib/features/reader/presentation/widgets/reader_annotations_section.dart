@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/design/app_design.dart';
 import '../annotation_display_text.dart';
 import '../../domain/annotation_color.dart';
 import '../../domain/reader_annotation.dart';
@@ -14,6 +15,7 @@ class ReaderAnnotationsSection extends StatelessWidget {
     required this.maxWidth,
     required this.onTap,
     required this.onDelete,
+    this.showTitle = true,
     super.key,
   });
 
@@ -25,6 +27,7 @@ class ReaderAnnotationsSection extends StatelessWidget {
   final double maxWidth;
   final ValueChanged<ReaderAnnotation> onTap;
   final ValueChanged<ReaderAnnotation> onDelete;
+  final bool showTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -40,14 +43,16 @@ class ReaderAnnotationsSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Annotations and bookmarks',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: textColor,
-                  fontWeight: FontWeight.w700,
+              if (showTitle) ...[
+                Text(
+                  'Annotations and bookmarks',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ],
               for (final annotation in annotations)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
@@ -94,6 +99,7 @@ class _AnnotationCard extends StatelessWidget {
     final markerColor = annotationColorById(annotation.colorId);
     final selectedText = annotationSelectedTextForDisplay(annotation);
     final noteText = plainAnnotationTextForDisplay(annotation.noteText);
+    final locationLabel = _annotationLocationLabel(annotation);
 
     return Material(
       color: Colors.transparent,
@@ -136,8 +142,20 @@ class _AnnotationCard extends StatelessWidget {
                               color: mutedColor,
                               fontWeight: FontWeight.w800,
                               height: 1.1,
+                              fontFamily: AppTypography.sans,
                             ),
                           ),
+                          if (locationLabel != null)
+                            Text(
+                              locationLabel,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: mutedColor.withValues(alpha: 0.78),
+                                fontWeight: FontWeight.w600,
+                                height: 1.1,
+                                fontFamily: AppTypography.sans,
+                                letterSpacing: 0,
+                              ),
+                            ),
                           if (annotation.isFavorite)
                             Icon(
                               Icons.star_rounded,
@@ -192,5 +210,42 @@ class _AnnotationCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String? _annotationLocationLabel(ReaderAnnotation annotation) {
+    final pdfPage = annotation.pdfPageNumber;
+    if (pdfPage != null) return 'Page $pdfPage';
+
+    final progress = annotation.epubProgress;
+    if (progress != null) {
+      final percent = (progress.clamp(0.0, 1.0) * 100).round();
+      final chapter = annotation.epubChapterIndex;
+      if (chapter != null) return 'Chapter ${chapter + 1} - $percent%';
+
+      return 'Progress $percent%';
+    }
+
+    final chapter = annotation.epubChapterIndex;
+    if (chapter != null) return 'Chapter ${chapter + 1}';
+
+    final textStart = annotation.locationStartIndex;
+    if (textStart != null) return 'Location ${_compactNumber(textStart + 1)}';
+
+    if (annotation.isPdfLocation) return 'PDF';
+    if (annotation.isEpubLocation) return 'EPUB';
+
+    return null;
+  }
+
+  String _compactNumber(int value) {
+    final text = value.toString();
+    final buffer = StringBuffer();
+
+    for (var index = 0; index < text.length; index++) {
+      if (index > 0 && (text.length - index) % 3 == 0) buffer.write(',');
+      buffer.write(text[index]);
+    }
+
+    return buffer.toString();
   }
 }

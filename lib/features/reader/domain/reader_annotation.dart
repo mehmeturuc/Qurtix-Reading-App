@@ -133,6 +133,51 @@ class ReaderAnnotation {
     return null;
   }
 
+  int? get pdfTotalPages {
+    final value = int.tryParse(_pdfValue('total') ?? '');
+    return value == null || value <= 0 ? null : value;
+  }
+
+  double? get pdfProgress {
+    final value = double.tryParse(_pdfValue('progress') ?? '');
+    if (value != null) return value.clamp(0.0, 1.0).toDouble();
+
+    final page = pdfPageNumber;
+    final total = pdfTotalPages;
+    if (page == null || total == null || total <= 1) return null;
+
+    return ((page - 1) / (total - 1)).clamp(0.0, 1.0).toDouble();
+  }
+
+  double? get pdfLocalSortOffset {
+    final rectsValue = _pdfValue('rects');
+    if (rectsValue == null || rectsValue.isEmpty) return null;
+
+    final firstRect = rectsValue.split(',').first;
+    final parts = firstRect.split('_');
+    if (parts.length != 4) return null;
+
+    final left = double.tryParse(parts[0]);
+    final top = double.tryParse(parts[1]);
+    if (left == null || top == null) return null;
+    if (!left.isFinite || !top.isFinite || left < 0 || top < 0) return null;
+
+    return (top * 100000) + left;
+  }
+
+  int? get epubSortOffset {
+    final sourceOffset = epubSourceOffset;
+    if (sourceOffset != null) return sourceOffset;
+
+    final chapter = epubChapterIndex;
+    final localStart = epubLocalStartIndex;
+    if (chapter != null && localStart != null) {
+      return chapter * 1000000000 + localStart;
+    }
+
+    return null;
+  }
+
   String? _epubValue(String key) {
     if (!locationRef.startsWith('epub:')) return null;
 
@@ -159,6 +204,23 @@ class ReaderAnnotation {
     } on FormatException {
       return value;
     }
+  }
+
+  String? _pdfValue(String key) {
+    if (!locationRef.startsWith('pdf:')) return null;
+
+    for (final part in locationRef.substring(4).split(';')) {
+      final separatorIndex = part.indexOf('=');
+      if (separatorIndex <= 0) continue;
+
+      final partKey = part.substring(0, separatorIndex).trim();
+      if (partKey != key) continue;
+
+      final value = part.substring(separatorIndex + 1).trim();
+      if (value.isNotEmpty) return value;
+    }
+
+    return null;
   }
 
   List<String>? get _locationParts {
